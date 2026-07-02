@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  beforeAfterToCriticMarkup,
   finalizeCriticMarkup,
   parseCriticMarkup,
   serializeCriticMarkup,
@@ -78,4 +79,45 @@ test('escaped CriticMarkup delimiters remain literal text', () => {
 
   assert.deepEqual(nodes, [{type: 'text', value: 'literal {++not an add++}'}]);
   assert.deepEqual(parseCriticMarkup(serializeCriticMarkup(nodes)), nodes);
+});
+
+test('before/after conversion preserves unchanged markdown', () => {
+  assert.equal(
+    beforeAfterToCriticMarkup('# Title\n\nBody', '# Title\n\nBody'),
+    '# Title\n\nBody',
+  );
+});
+
+test('before/after conversion emits line additions and deletions', () => {
+  assert.equal(
+    beforeAfterToCriticMarkup('a\nc', 'a\nb\nc'),
+    'a\n{++b++}\nc',
+  );
+  assert.equal(
+    beforeAfterToCriticMarkup('a\nb\nc', 'a\nc'),
+    'a\n{--b--}\nc',
+  );
+});
+
+test('before/after conversion emits inline additions and deletions', () => {
+  assert.equal(
+    beforeAfterToCriticMarkup('hello world', 'hello brave world'),
+    'hello {++brave ++}world',
+  );
+  assert.equal(
+    beforeAfterToCriticMarkup('hello brave world', 'hello world'),
+    'hello {--brave --}world',
+  );
+});
+
+test('before/after conversion keeps a formatting-boundary edit atomic', () => {
+  const before = 'this is **a great idea** for us.';
+  const after = 'this **great** for us';
+  const criticMarkup = beforeAfterToCriticMarkup(before, after);
+
+  assert.equal(
+    criticMarkup,
+    'this {~~is **a great idea** for us.~>**great** for us~~}',
+  );
+  assert.equal(finalizeCriticMarkup(criticMarkup), after);
 });

@@ -22,6 +22,10 @@ export type FinalizeCriticMarkupOptions = {
   readonly preserveComments?: boolean;
 };
 
+export type BeforeAfterToCriticMarkupOptions = {
+  readonly normalizeLineEndings?: boolean;
+};
+
 type SimpleMarkerType = Exclude<CriticMarkupNode['type'], 'text' | 'substitution'>;
 
 type SimpleMarker = {
@@ -193,6 +197,41 @@ export function finalizeCriticMarkup(
   return output;
 }
 
+export function beforeAfterToCriticMarkup(
+  beforeMarkdown: string,
+  afterMarkdown: string,
+  options: BeforeAfterToCriticMarkupOptions = {},
+): string {
+  const normalizeLineEndings = options.normalizeLineEndings ?? true;
+  const before = normalizeLineEndings ? normalizeNewlines(beforeMarkdown) : beforeMarkdown;
+  const after = normalizeLineEndings ? normalizeNewlines(afterMarkdown) : afterMarkdown;
+  const beforeLines = before.split('\n');
+  const afterLines = after.split('\n');
+  const matches = lineMatches(beforeLines, afterLines);
+  const outputLines: string[] = [];
+  let beforeIndex = 0;
+  let afterIndex = 0;
+
+  for (const match of matches) {
+    appendChangedLines(
+      outputLines,
+      beforeLines.slice(beforeIndex, match.beforeIndex),
+      afterLines.slice(afterIndex, match.afterIndex),
+    );
+    outputLines.push(beforeLines[match.beforeIndex] ?? '');
+    beforeIndex = match.beforeIndex + 1;
+    afterIndex = match.afterIndex + 1;
+  }
+
+  appendChangedLines(
+    outputLines,
+    beforeLines.slice(beforeIndex),
+    afterLines.slice(afterIndex),
+  );
+
+  return outputLines.join('\n');
+}
+
 function serializeNode(node: CriticMarkupNode): string {
   switch (node.type) {
     case 'text':
@@ -208,6 +247,163 @@ function serializeNode(node: CriticMarkupNode): string {
     case 'highlight':
       return `{==${escapeCriticMarkup(node.value)}==}`;
   }
+}
+
+function appendChangedLines(
+  outputLines: string[],
+  beforeLines: readonly string[],
+  afterLines: readonly string[],
+): void {
+  const pairCount = Math.min(beforeLines.length, afterLines.length);
+
+  for (let index = 0; index < pairCount; index += 1) {
+    const beforeLine = beforeLines[index] ?? '';
+    const afterLine = afterLines[index] ?? '';
+    outputLines.push(renderInlineChange(beforeLine, afterLine));
+  }
+
+  for (let index = pairCount; index < beforeLines.length; index += 1) {
+    outputLines.push(serializeCriticMarkup([{type: 'deletion', value: beforeLines[index] ?? ''}]));
+  }
+
+  for (let index = pairCount; index < afterLines.length; index += 1) {
+    outputLines.push(serializeCriticMarkup([{type: 'addition', value: afterLines[index] ?? ''}]));
+  }
+}
+
+function renderInlineChange(beforeLine: string, afterLine: string): string {
+  if (beforeLine === afterLine) {
+    return beforeLine;
+  }
+
+  const beforeTokens = tokenizeInlineMarkdown(beforeLine);
+  const afterTokens = tokenizeInlineMarkdown(afterLine);
+  const prefixLength = commonPrefixLength(beforeTokens, afterTokens);
+  const prefix = beforeTokens.slice(0, prefixLength).join('');
+  const beforeRest = beforeTokens.slice(prefixLength);
+  const afterRest = afterTokens.slice(prefixLength);
+
+  if (beforeRest.length === 0) {
+    return prefix + serializeCriticMarkup([{type: 'addition', value: afterRest.join('')}]);
+  }
+
+  if (afterRest.length === 0) {
+    return prefix + serializeCriticMarkup([{type: 'deletion', value: beforeRest.join('')}]);
+  }
+
+  if (endsWithTokens(afterRest, beforeRest)) {
+    const addedTokens = afterRest.slice(0, afterRest.length - beforeRest.length);
+    return (
+      prefix +
+      serializeCriticMarkup([{type: 'addition', value: addedTokens.join('')}]) +
+      beforeRest.join('')
+    );
+  }
+
+  if (endsWithTokens(beforeRest, afterRest)) {
+    const deletedTokens = beforeRest.slice(0, beforeRest.length - afterRest.length);
+    return (
+      prefix +
+      serializeCriticMarkup([{type: 'deletion', value: deletedTokens.join('')}]) +
+      afterRest.join('')
+    );
+  }
+
+  return (
+    prefix +
+    serializeCriticMarkup([
+      {
+        type: 'substitution',
+        oldValue: beforeRest.join(''),
+        newValue: afterRest.join(''),
+      },
+    ])
+  );
+}
+
+function lineMatches(
+  beforeLines: readonly string[],
+  afterLines: readonly string[],
+): Array<{beforeIndex: number; afterIndex: number}> {
+  const rowCount = beforeLines.length + 1;
+  const columnCount = afterLines.length + 1;
+  const lengths: number[][] = Array.from({length: rowCount}, () =>
+    Array.from({length: columnCount}, () => 0),
+  );
+
+  for (let beforeIndex = beforeLines.length - 1; beforeIndex >= 0; beforeIndex -= 1) {
+    for (let afterIndex = afterLines.length - 1; afterIndex >= 0; afterIndex -= 1) {
+      if (beforeLines[beforeIndex] === afterLines[afterIndex]) {
+        lengths[beforeIndex]![afterIndex] = (lengths[beforeIndex + 1]?.[afterIndex + 1] ?? 0) + 1;
+      } else {
+        lengths[beforeIndex]![afterIndex] = Math.max(
+          lengths[beforeIndex + 1]?.[afterIndex] ?? 0,
+          lengths[beforeIndex]?.[afterIndex + 1] ?? 0,
+        );
+      }
+    }
+  }
+
+  const matches: Array<{beforeIndex: number; afterIndex: number}> = [];
+  let beforeIndex = 0;
+  let afterIndex = 0;
+
+  while (beforeIndex < beforeLines.length && afterIndex < afterLines.length) {
+    if (beforeLines[beforeIndex] === afterLines[afterIndex]) {
+      matches.push({beforeIndex, afterIndex});
+      beforeIndex += 1;
+      afterIndex += 1;
+    } else if (
+      (lengths[beforeIndex + 1]?.[afterIndex] ?? 0) >=
+      (lengths[beforeIndex]?.[afterIndex + 1] ?? 0)
+    ) {
+      beforeIndex += 1;
+    } else {
+      afterIndex += 1;
+    }
+  }
+
+  return matches;
+}
+
+function tokenizeInlineMarkdown(value: string): string[] {
+  const tokens: string[] = [];
+  const tokenPattern =
+    /(\*\*|__|`+|!\[|\]\(|[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?|\s+|.)/gy;
+  let match: RegExpExecArray | null;
+
+  while ((match = tokenPattern.exec(value)) !== null) {
+    tokens.push(match[0]);
+  }
+
+  return tokens;
+}
+
+function commonPrefixLength(beforeTokens: readonly string[], afterTokens: readonly string[]): number {
+  const maxLength = Math.min(beforeTokens.length, afterTokens.length);
+  let index = 0;
+  while (index < maxLength && beforeTokens[index] === afterTokens[index]) {
+    index += 1;
+  }
+  return index;
+}
+
+function endsWithTokens(tokens: readonly string[], suffix: readonly string[]): boolean {
+  if (suffix.length > tokens.length) {
+    return false;
+  }
+
+  const offset = tokens.length - suffix.length;
+  for (let index = 0; index < suffix.length; index += 1) {
+    if (tokens[offset + index] !== suffix[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function normalizeNewlines(value: string): string {
+  return value.replace(/\r\n?/g, '\n');
 }
 
 function pushNode(nodes: CriticMarkupNode[], node: CriticMarkupNode): void {
