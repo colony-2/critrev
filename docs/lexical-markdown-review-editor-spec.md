@@ -102,6 +102,8 @@ Use a document editor layout rather than a marketing/editor demo layout.
 Comment behavior should follow common review-tool conventions.
 
 - Selecting text shows a small floating action with comment and highlight options.
+- Right-clicking a selection opens the comment composer on pointer devices.
+- Long-touching a selection opens the comment composer on phones and touch devices.
 - Add Comment opens a compact composer near the selection.
 - Submitting creates an inline markdown comment plus hydrated UI state with:
   - Author display.
@@ -139,22 +141,25 @@ Track Changes is primarily the visual review layer for CriticMarkup change spans
 - A reviewer can reject individual imported suggestions.
 - One CriticMarkup change marker is one user-visible suggestion card and one accept/reject unit, even when it contains mixed formatting.
 - A reviewer can also make additional edits during review.
-- Additional edits should be tracked as new suggestions when Track Changes is on.
+- Additional edits should be tracked as new CriticMarkup suggestions when Track Changes is on, including when the editor initially loaded markdown with no pending suggestions.
 - Additional edits should be applied directly when Track Changes is off.
 - The editor emits CriticMarkup where rejected changes have already been resolved to their original/no-change form.
 - The finalizer accepts every remaining CriticMarkup change marker.
 
 - Insertion suggestion:
-  - Inline text appears green with underline or subtle green tint.
+  - Inline text appears green.
+  - No underline, background, block wrapper, or inserted "from/to" text is added.
   - Hover/click opens suggestion card.
   - Accept may leave `{++new++}` for the finalizer or unwrap it to `new`.
   - Reject removes inserted content from the editor's CriticMarkup output.
 - Deletion suggestion:
-  - Inline text remains visible with red strikethrough and subtle red tint.
+  - Inline text remains visible with normal text color and a green strikethrough.
+  - No background, block wrapper, or additional deletion label is added.
   - Accept may leave `{--old--}` for the finalizer or remove it immediately.
   - Reject restores `old` as normal markdown in the editor's CriticMarkup output.
 - Replacement suggestion:
   - Use CriticMarkup substitution syntax: `{~~old~>new~~}`.
+  - Render as adjacent deletion and insertion marks only, not as a "old to new" phrase or special block.
   - Accept may leave the substitution for the finalizer or unwrap it to `new`.
   - Reject restores `old` as normal markdown in the editor's CriticMarkup output.
 - Move suggestion:
@@ -262,6 +267,12 @@ Pipeline:
 
 This is the Lexical editor's boundary contract.
 
+Stage 2 has three explicit surfaces:
+
+- Stage 2.1 Raw Editor Input: the CriticMarkup markdown handed to the editor.
+- Stage 2.2 Review Editor: the rich editable surface, suggestion cards, inline accept/reject controls, and comment composer.
+- Stage 2.3 Raw Editor Output: the CriticMarkup markdown emitted by the editor after accept/reject decisions, reviewer edits, comments, and range comments.
+
 Input:
 
 - `review.critic.md`.
@@ -288,7 +299,7 @@ Editor output rules:
 - Rejected deletions are restored as plain markdown in `reviewed.critic.md`.
 - Rejected substitutions are restored to their original text as plain markdown in `reviewed.critic.md`.
 - Direct reviewer edits made with Track Changes off are emitted as plain markdown.
-- Reviewer edits made with Track Changes on are emitted as new CriticMarkup changes.
+- Reviewer edits made with Track Changes on are emitted as new CriticMarkup changes, not hard changes, even when there were no imported suggestions.
 - Comments and range comments are emitted as CriticMarkup comments/range comments.
 
 ### Stage 3: CriticMarkup Finalizer
