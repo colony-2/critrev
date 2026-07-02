@@ -6,6 +6,7 @@ import {
   listCriticMarkupChanges,
   parseCriticMarkup,
   resolveCriticMarkupChange,
+  serializeCriticMarkup,
   type CriticMarkupChange,
   type CriticMarkupChangeDecision,
   type CriticMarkupNode,
@@ -80,6 +81,8 @@ renderedReview.addEventListener('keyup', () => {
   showInlineActions(changeElement);
 });
 renderedReview.addEventListener('input', () => {
+  criticInput.value = renderedReviewToCriticMarkup(renderedReview, activeViewMode);
+  refreshDerivedPanels(parseCriticMarkup(criticInput.value));
   statusPill.textContent = 'Preview edited';
 });
 inlineReviewActions.addEventListener('click', event => {
@@ -120,6 +123,10 @@ function updateGeneratedOnly(): void {
 function renderCriticMarkup(): void {
   const nodes = parseCriticMarkup(criticInput.value);
   renderedReview.innerHTML = renderNodes(nodes, activeViewMode);
+  refreshDerivedPanels(nodes);
+}
+
+function refreshDerivedPanels(nodes: readonly CriticMarkupNode[]): void {
   finalOutput.value = finalizeCriticMarkup(nodes);
   cleanOutput.value = finalizeCriticMarkup(nodes, {preserveComments: false});
   metrics.innerHTML = renderMetrics(nodes);
@@ -191,7 +198,7 @@ function renderNode(
       if (viewMode === 'accept') {
         return markdownInlineToHtml(node.value);
       }
-      return `<ins class="review-change review-addition" data-change-index="${changeIndex}" tabindex="0">${markdownInlineToHtml(node.value)}</ins>`;
+      return `<ins class="review-change review-addition" data-change-index="${changeIndex}" data-change-kind="addition" tabindex="0">${markdownInlineToHtml(node.value)}</ins>`;
     case 'deletion':
       if (viewMode === 'accept') {
         return '';
@@ -199,7 +206,7 @@ function renderNode(
       if (viewMode === 'reject') {
         return markdownInlineToHtml(node.value);
       }
-      return `<del class="review-change review-deletion" data-change-index="${changeIndex}" tabindex="0">${markdownInlineToHtml(node.value)}</del>`;
+      return `<del class="review-change review-deletion" data-change-index="${changeIndex}" data-change-kind="deletion" tabindex="0">${markdownInlineToHtml(node.value)}</del>`;
     case 'substitution':
       if (viewMode === 'accept') {
         return markdownInlineToHtml(node.newValue);
@@ -207,15 +214,15 @@ function renderNode(
       if (viewMode === 'reject') {
         return markdownInlineToHtml(node.oldValue);
       }
-      return `<del class="review-change review-deletion" data-change-index="${changeIndex}" tabindex="0">${markdownInlineToHtml(
+      return `<del class="review-change review-deletion" data-change-index="${changeIndex}" data-change-kind="substitution" data-change-part="old" tabindex="0">${markdownInlineToHtml(
         node.oldValue,
-      )}</del><ins class="review-change review-addition" data-change-index="${changeIndex}" tabindex="0">${markdownInlineToHtml(
+      )}</del><ins class="review-change review-addition" data-change-index="${changeIndex}" data-change-kind="substitution" data-change-part="new" tabindex="0">${markdownInlineToHtml(
         node.newValue,
       )}</ins>`;
     case 'comment':
-      return `<span class="comment">Comment: ${escapeHtml(node.value)}</span>`;
+      return `<span class="comment" data-critic-type="comment">Comment: ${escapeHtml(node.value)}</span>`;
     case 'highlight':
-      return `<mark>${markdownInlineToHtml(node.value)}</mark>`;
+      return `<mark data-critic-type="highlight">${markdownInlineToHtml(node.value)}</mark>`;
   }
   return assertNever(node);
 }
@@ -252,6 +259,147 @@ function showInlineActions(changeElement: HTMLElement): void {
 function hideInlineActions(): void {
   inlineReviewActions.hidden = true;
   inlineReviewActions.removeAttribute('data-change-index');
+}
+
+function renderedReviewToCriticMarkup(root: HTMLElement, viewMode: ViewMode): string {
+  if (viewMode !== 'revisions') {
+    return serializeCriticMarkup([{type: 'text', value: childNodesToMarkdown(root.childNodes)}]);
+  }
+
+  return childNodesToCriticMarkup(root.childNodes);
+}
+
+function childNodesToCriticMarkup(nodes: NodeListOf<ChildNode>): string {
+  const childNodes = Array.from(nodes);
+  let output = '';
+
+  for (let index = 0; index < childNodes.length; index += 1) {
+    const node = childNodes[index];
+    if (node === undefined) {
+      continue;
+    }
+
+    const element = node instanceof HTMLElement ? node : null;
+    const changeKind = element?.dataset.changeKind;
+
+    if (element !== null && changeKind === 'addition') {
+      output += serializeCriticMarkup([
+        {type: 'addition', value: childNodesToMarkdown(element.childNodes)},
+      ]);
+      continue;
+    }
+
+    if (element !== null && changeKind === 'deletion') {
+      output += serializeCriticMarkup([
+        {type: 'deletion', value: childNodesToMarkdown(element.childNodes)},
+      ]);
+      continue;
+    }
+
+    if (element !== null && changeKind === 'substitution') {
+      const substitution = collectSubstitutionParts(childNodes, index);
+      output += serializeCriticMarkup([
+        {
+          type: 'substitution',
+          oldValue: substitution.oldValue,
+          newValue: substitution.newValue,
+        },
+      ]);
+      index = substitution.endIndex;
+      continue;
+    }
+
+    if (element?.dataset.criticType === 'comment') {
+      output += serializeCriticMarkup([{type: 'comment', value: commentElementValue(element)}]);
+      continue;
+    }
+
+    if (element?.dataset.criticType === 'highlight') {
+      output += serializeCriticMarkup([
+        {type: 'highlight', value: childNodesToMarkdown(element.childNodes)},
+      ]);
+      continue;
+    }
+
+    output += serializeCriticMarkup([{type: 'text', value: nodeToMarkdown(node)}]);
+  }
+
+  return output;
+}
+
+function collectSubstitutionParts(
+  nodes: readonly Node[],
+  startIndex: number,
+): {endIndex: number; newValue: string; oldValue: string} {
+  const firstElement = nodes[startIndex];
+  if (!(firstElement instanceof HTMLElement)) {
+    return {endIndex: startIndex, newValue: '', oldValue: ''};
+  }
+
+  const changeIndex = firstElement.dataset.changeIndex;
+  let endIndex = startIndex;
+  let oldValue = '';
+  let newValue = '';
+
+  for (let index = startIndex; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    if (!(node instanceof HTMLElement)) {
+      break;
+    }
+    if (
+      node.dataset.changeKind !== 'substitution' ||
+      node.dataset.changeIndex !== changeIndex
+    ) {
+      break;
+    }
+
+    const markdown = childNodesToMarkdown(node.childNodes);
+    if (node.dataset.changePart === 'old') {
+      oldValue += markdown;
+    } else {
+      newValue += markdown;
+    }
+    endIndex = index;
+  }
+
+  return {endIndex, newValue, oldValue};
+}
+
+function childNodesToMarkdown(nodes: NodeListOf<ChildNode>): string {
+  return Array.from(nodes)
+    .map(nodeToMarkdown)
+    .join('');
+}
+
+function nodeToMarkdown(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.nodeValue ?? '';
+  }
+
+  if (!(node instanceof HTMLElement)) {
+    return '';
+  }
+
+  switch (node.tagName) {
+    case 'B':
+    case 'STRONG':
+      return `**${childNodesToMarkdown(node.childNodes)}**`;
+    case 'BR':
+      return '\n';
+    case 'CODE':
+      return `\`${childNodesToMarkdown(node.childNodes)}\``;
+    case 'DIV':
+    case 'P': {
+      const value = childNodesToMarkdown(node.childNodes);
+      return value.endsWith('\n') ? value : `${value}\n`;
+    }
+    default:
+      return childNodesToMarkdown(node.childNodes);
+  }
+}
+
+function commentElementValue(element: HTMLElement): string {
+  return element.textContent?.replace(/^Comment:\s*/, '') ?? '';
 }
 
 function renderMetrics(nodes: readonly CriticMarkupNode[]): string {

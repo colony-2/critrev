@@ -78,6 +78,40 @@ test('toggles between revisions, reject-all preview, and accept-all preview', as
   await expect(renderedReview.locator('del')).toHaveCount(2);
 });
 
+test('rendered review is editable text', async ({page}) => {
+  await page.goto('/');
+
+  const renderedReview = page.getByTestId('rendered-review');
+  await expect(renderedReview).toHaveAttribute('contenteditable', 'true');
+  await renderedReview.focus();
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('Direct edit');
+
+  await expect(page.locator('#status-pill')).toHaveText('Preview edited');
+  await expect(page.getByTestId('critic-input')).toHaveValue('Direct edit');
+  await expect(page.getByTestId('final-output')).toHaveValue('Direct edit');
+});
+
+test('rendered edits preserve unresolved suggestion markers', async ({page}) => {
+  await page.goto('/');
+
+  await page.getByTestId('rendered-review').evaluate(element => {
+    element.insertAdjacentText('beforeend', ' Extra note.');
+    element.dispatchEvent(new InputEvent('input', {bubbles: true, data: ' Extra note.'}));
+  });
+
+  await expect(page.getByTestId('critic-input')).toHaveValue(
+    [
+      'this {~~is **a great idea** for us.~>**great** for us~~}',
+      '',
+      'Please ship the {~~first draft.~>polished draft.~~} Extra note.',
+    ].join('\n'),
+  );
+  await expect(page.getByTestId('final-output')).toHaveValue(
+    'this **great** for us\n\nPlease ship the polished draft. Extra note.',
+  );
+});
+
 test('rejects one formatted-boundary substitution as a single change', async ({page}) => {
   await page.goto('/');
 
