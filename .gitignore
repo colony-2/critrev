@@ -1,7 +1,10 @@
 node_modules/
+.cache/
 dist/
 dist-demo/
 coverage/
+playwright-report/
+test-results/
 .idea/
 .DS_Store
 npm-debug.log*

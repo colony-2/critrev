@@ -94,8 +94,8 @@ function renderChangeCard(change: CriticMarkupChange): string {
       <code>${escapeHtml(change.newValue || 'empty')}</code>
     </div>
     <div class="change-actions">
-      <button type="button" data-change-index="${change.changeIndex}" data-decision="accept">Accept</button>
-      <button type="button" data-change-index="${change.changeIndex}" data-decision="reject">Reject</button>
+      <button type="button" data-testid="accept-change" data-change-index="${change.changeIndex}" data-decision="accept">Accept</button>
+      <button type="button" data-testid="reject-change" data-change-index="${change.changeIndex}" data-decision="reject">Reject</button>
     </div>
   </section>`;
 }

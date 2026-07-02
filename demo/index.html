@@ -27,11 +27,11 @@
           </div>
           <label class="field">
             <span>before.md</span>
-            <textarea id="before-input" spellcheck="false"></textarea>
+            <textarea id="before-input" data-testid="before-input" spellcheck="false"></textarea>
           </label>
           <label class="field">
             <span>after.md</span>
-            <textarea id="after-input" spellcheck="false"></textarea>
+            <textarea id="after-input" data-testid="after-input" spellcheck="false"></textarea>
           </label>
         </article>
 
@@ -45,7 +45,7 @@
           </div>
           <label class="field">
             <span>Editor boundary</span>
-            <textarea id="critic-input" spellcheck="false"></textarea>
+            <textarea id="critic-input" data-testid="critic-input" spellcheck="false"></textarea>
           </label>
           <div class="metrics" id="metrics" aria-label="CriticMarkup counts"></div>
           <div class="change-list" id="change-list" aria-label="Review changes"></div>
@@ -58,7 +58,7 @@
               <h2>Rendered Review</h2>
             </div>
           </div>
-          <div class="rendered-review" id="rendered-review"></div>
+          <div class="rendered-review" id="rendered-review" data-testid="rendered-review"></div>
         </article>
 
         <article class="panel output-panel">
@@ -70,11 +70,11 @@
           </div>
           <label class="field">
             <span>final.md</span>
-            <textarea id="final-output" readonly spellcheck="false"></textarea>
+            <textarea id="final-output" data-testid="final-output" readonly spellcheck="false"></textarea>
           </label>
           <label class="field">
             <span>final-clean.md</span>
-            <textarea id="clean-output" readonly spellcheck="false"></textarea>
+            <textarea id="clean-output" data-testid="clean-output" readonly spellcheck="false"></textarea>
           </label>
         </article>
       </section>

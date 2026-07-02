@@ -12,7 +12,9 @@ The current implementation focuses on the durable text pipeline:
 
 ```sh
 npm install
+PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright npx playwright install chromium
 npm test
+npm run test:e2e
 npm run typecheck
 npm run build:demo
 npm run dev
@@ -43,5 +45,6 @@ import {
 - Individual CriticMarkup change extraction and accept/reject resolution.
 - Deterministic first-pass `before.md` plus `after.md` to CriticMarkup conversion.
 - Vanilla TypeScript demo page showing each stage of the pipeline.
+- Playwright e2e coverage for the demo page in desktop and phone viewports.
 
 The before/after conversion is intentionally an initial dependency-free pass. It preserves one logical formatted-boundary replacement as one CriticMarkup substitution, but it is not yet the full markdown AST matcher described in the spec.
