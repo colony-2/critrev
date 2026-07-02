@@ -16,6 +16,7 @@ test('shows each CriticMarkup pipeline stage', async ({page}) => {
 
   await expect(page.getByRole('heading', {name: 'Raw Editor Input'})).toBeVisible();
   await expect(page.getByRole('heading', {name: 'Review Editor'})).toBeVisible();
+  await expect(page.getByRole('heading', {name: 'Changes'})).toBeVisible();
   await expect(page.getByRole('heading', {name: 'Raw Editor Output'})).toBeVisible();
   await expect(page.getByTestId('critic-input')).toHaveValue(sampleEditorMarkup);
   await expect(page.getByTestId('critic-output')).toHaveValue(sampleEditorMarkup);
@@ -221,14 +222,11 @@ test('phone viewport exposes the same review controls', async ({page}) => {
   await expect(page.getByTestId('critic-input')).toBeVisible();
   await expect(page.getByTestId('reject-change').first()).toBeVisible();
 
-  const viewport = page.viewportSize();
-  if (viewport !== null && viewport.width < 900) {
-    const editorBox = await page.getByTestId('rendered-review').boundingBox();
-    const suggestionsBox = await page.locator('.suggestion-pane').boundingBox();
-    expect(editorBox).not.toBeNull();
-    expect(suggestionsBox).not.toBeNull();
-    expect(suggestionsBox!.y).toBeGreaterThan(editorBox!.y + editorBox!.height - 1);
-  }
+  const editorBox = await page.getByTestId('rendered-review').boundingBox();
+  const suggestionsBox = await page.locator('.suggestion-pane').boundingBox();
+  expect(editorBox).not.toBeNull();
+  expect(suggestionsBox).not.toBeNull();
+  expect(suggestionsBox!.y).toBeGreaterThan(editorBox!.y + editorBox!.height - 1);
 
   await page.getByTestId('accept-change').first().click();
   await expect(page.getByTestId('final-output')).toHaveValue(
