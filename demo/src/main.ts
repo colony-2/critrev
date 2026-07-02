@@ -16,21 +16,29 @@ type ViewMode = 'accept' | 'reject' | 'revisions';
 
 const sampleBefore = 'this is **a great idea** for us.\n\nPlease ship the first draft.';
 const sampleAfter = 'this **great** for us\n\nPlease ship the polished draft.';
+const sampleRangeComment = 'Range comment: tighten the action wording';
+const samplePointComment = 'Point comment: confirm the delivery owner';
 
 const beforeInput = getElement<HTMLTextAreaElement>('before-input');
 const afterInput = getElement<HTMLTextAreaElement>('after-input');
-const criticInput = getElement<HTMLTextAreaElement>('critic-input');
+const editorInput = getElement<HTMLTextAreaElement>('critic-input');
+const editorOutput = getElement<HTMLTextAreaElement>('critic-output');
 const finalOutput = getElement<HTMLTextAreaElement>('final-output');
 const cleanOutput = getElement<HTMLTextAreaElement>('clean-output');
 const renderedReview = getElement<HTMLElement>('rendered-review');
 const metrics = getElement<HTMLElement>('metrics');
 const changeList = getElement<HTMLElement>('change-list');
 const inlineReviewActions = getElement<HTMLElement>('inline-review-actions');
+const commentPopover = getElement<HTMLFormElement>('comment-popover');
+const commentInput = getElement<HTMLInputElement>('comment-input');
 const statusPill = getElement<HTMLElement>('status-pill');
 const viewModeButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-view-mode]'),
 );
 let activeViewMode: ViewMode = 'revisions';
+let editBaselineCriticMarkup = '';
+let longTouchTimer = 0;
+let pendingCommentRange: Range | null = null;
 
 beforeInput.value = sampleBefore;
 afterInput.value = sampleAfter;
@@ -38,14 +46,17 @@ afterInput.value = sampleAfter;
 getElement<HTMLButtonElement>('reset-sample').addEventListener('click', () => {
   beforeInput.value = sampleBefore;
   afterInput.value = sampleAfter;
-  syncCriticMarkup();
+  initializeEditor(sampleEditorInput());
 });
 
 getElement<HTMLButtonElement>('sync-review').addEventListener('click', syncCriticMarkup);
+getElement<HTMLButtonElement>('load-editor').addEventListener('click', loadEditorInput);
 
 beforeInput.addEventListener('input', updateGeneratedOnly);
 afterInput.addEventListener('input', updateGeneratedOnly);
-criticInput.addEventListener('input', renderCriticMarkup);
+editorInput.addEventListener('input', () => {
+  statusPill.textContent = 'Input edited';
+});
 changeList.addEventListener('click', event => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
     'button[data-change-index][data-decision]',
@@ -57,6 +68,9 @@ changeList.addEventListener('click', event => {
   const changeIndex = Number(button.dataset.changeIndex);
   const decision = button.dataset.decision as CriticMarkupChangeDecision;
   resolveChange(changeIndex, decision);
+});
+renderedReview.addEventListener('beforeinput', () => {
+  editBaselineCriticMarkup = editorOutput.value;
 });
 renderedReview.addEventListener('click', event => {
   const changeElement = (event.target as HTMLElement).closest<HTMLElement>(
@@ -80,10 +94,30 @@ renderedReview.addEventListener('keyup', () => {
   }
   showInlineActions(changeElement);
 });
+renderedReview.addEventListener('contextmenu', event => {
+  const selection = window.getSelection();
+  if (selectionWithinRenderedReview(selection)) {
+    event.preventDefault();
+    showCommentPopover(event.clientX, event.clientY);
+  }
+});
+renderedReview.addEventListener('pointerdown', event => {
+  window.clearTimeout(longTouchTimer);
+  if (event.pointerType !== 'touch') {
+    return;
+  }
+
+  longTouchTimer = window.setTimeout(() => {
+    const selection = window.getSelection();
+    if (selectionWithinRenderedReview(selection)) {
+      showCommentPopover(event.clientX, event.clientY);
+    }
+  }, 650);
+});
+renderedReview.addEventListener('pointercancel', clearLongTouchTimer);
+renderedReview.addEventListener('pointerup', clearLongTouchTimer);
 renderedReview.addEventListener('input', () => {
-  criticInput.value = renderedReviewToCriticMarkup(renderedReview, activeViewMode);
-  refreshDerivedPanels(parseCriticMarkup(criticInput.value));
-  statusPill.textContent = 'Preview edited';
+  applyRenderedEditAsSuggestion();
 });
 inlineReviewActions.addEventListener('click', event => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
@@ -97,6 +131,10 @@ inlineReviewActions.addEventListener('click', event => {
   const decision = button.dataset.inlineDecision as CriticMarkupChangeDecision;
   resolveChange(changeIndex, decision);
 });
+commentPopover.addEventListener('submit', event => {
+  event.preventDefault();
+  addCommentFromSelection();
+});
 for (const button of viewModeButtons) {
   button.addEventListener('click', () => {
     activeViewMode = button.dataset.viewMode as ViewMode;
@@ -104,25 +142,55 @@ for (const button of viewModeButtons) {
       nextButton.classList.toggle('active', nextButton === button);
     }
     hideInlineActions();
-    renderCriticMarkup();
+    hideCommentPopover();
+    renderEditorOutput();
   });
 }
 
-syncCriticMarkup();
+initializeEditor(sampleEditorInput());
 
 function syncCriticMarkup(): void {
-  criticInput.value = beforeAfterToCriticMarkup(beforeInput.value, afterInput.value);
-  renderCriticMarkup();
+  initializeEditor(buildEditorInputFromBeforeAfter());
+}
+
+function buildEditorInputFromBeforeAfter(): string {
+  return beforeAfterToCriticMarkup(beforeInput.value, afterInput.value);
+}
+
+function sampleEditorInput(): string {
+  return [
+    'this {~~is **a great idea** for us.~>**great** for us~~}',
+    '',
+    `{==Please ship==}{>>${sampleRangeComment}<<} the {~~first draft.~>polished draft.~~}{>>${samplePointComment}<<}`,
+  ].join('\n');
+}
+
+function initializeEditor(criticMarkup: string): void {
+  editorInput.value = criticMarkup;
+  editorOutput.value = criticMarkup;
+  editBaselineCriticMarkup = criticMarkup;
+  activeViewMode = 'revisions';
+  for (const button of viewModeButtons) {
+    button.classList.toggle('active', button.dataset.viewMode === activeViewMode);
+  }
+  renderEditorOutput();
+}
+
+function loadEditorInput(): void {
+  editorOutput.value = editorInput.value;
+  editBaselineCriticMarkup = editorOutput.value;
+  renderEditorOutput();
 }
 
 function updateGeneratedOnly(): void {
-  const generated = beforeAfterToCriticMarkup(beforeInput.value, afterInput.value);
-  statusPill.textContent = generated === criticInput.value ? 'Synced' : 'Unsynced';
+  const generated = buildEditorInputFromBeforeAfter();
+  statusPill.textContent = generated === editorInput.value ? 'Input synced' : 'Input stale';
 }
 
-function renderCriticMarkup(): void {
-  const nodes = parseCriticMarkup(criticInput.value);
+function renderEditorOutput(): void {
+  const nodes = parseCriticMarkup(editorOutput.value);
   renderedReview.innerHTML = renderNodes(nodes, activeViewMode);
+  renderedReview.contentEditable = activeViewMode === 'revisions' ? 'true' : 'false';
   refreshDerivedPanels(nodes);
 }
 
@@ -132,8 +200,8 @@ function refreshDerivedPanels(nodes: readonly CriticMarkupNode[]): void {
   metrics.innerHTML = renderMetrics(nodes);
   changeList.innerHTML = renderChangeList(listCriticMarkupChanges(nodes));
   statusPill.textContent =
-    criticInput.value === beforeAfterToCriticMarkup(beforeInput.value, afterInput.value)
-      ? 'Synced'
+    editorOutput.value === editorInput.value
+      ? 'Loaded'
       : 'Edited';
 }
 
@@ -141,9 +209,11 @@ function resolveChange(
   changeIndex: number,
   decision: CriticMarkupChangeDecision,
 ): void {
-  criticInput.value = resolveCriticMarkupChange(criticInput.value, changeIndex, decision);
+  editorOutput.value = resolveCriticMarkupChange(editorOutput.value, changeIndex, decision);
+  editBaselineCriticMarkup = editorOutput.value;
   hideInlineActions();
-  renderCriticMarkup();
+  hideCommentPopover();
+  renderEditorOutput();
 }
 
 function renderChangeList(changes: readonly CriticMarkupChange[]): string {
@@ -198,7 +268,7 @@ function renderNode(
       if (viewMode === 'accept') {
         return markdownInlineToHtml(node.value);
       }
-      return `<ins class="review-change review-addition" data-change-index="${changeIndex}" data-change-kind="addition" tabindex="0">${markdownInlineToHtml(node.value)}</ins>`;
+      return `<ins class="review-change review-addition" data-change-index="${changeIndex}" data-change-kind="addition" contenteditable="false" tabindex="0">${markdownInlineToHtml(node.value)}</ins>`;
     case 'deletion':
       if (viewMode === 'accept') {
         return '';
@@ -206,7 +276,7 @@ function renderNode(
       if (viewMode === 'reject') {
         return markdownInlineToHtml(node.value);
       }
-      return `<del class="review-change review-deletion" data-change-index="${changeIndex}" data-change-kind="deletion" tabindex="0">${markdownInlineToHtml(node.value)}</del>`;
+      return `<del class="review-change review-deletion" data-change-index="${changeIndex}" data-change-kind="deletion" contenteditable="false" tabindex="0">${markdownInlineToHtml(node.value)}</del>`;
     case 'substitution':
       if (viewMode === 'accept') {
         return markdownInlineToHtml(node.newValue);
@@ -214,13 +284,13 @@ function renderNode(
       if (viewMode === 'reject') {
         return markdownInlineToHtml(node.oldValue);
       }
-      return `<del class="review-change review-deletion" data-change-index="${changeIndex}" data-change-kind="substitution" data-change-part="old" tabindex="0">${markdownInlineToHtml(
+      return `<del class="review-change review-deletion" data-change-index="${changeIndex}" data-change-kind="substitution" data-change-part="old" contenteditable="false" tabindex="0">${markdownInlineToHtml(
         node.oldValue,
-      )}</del><ins class="review-change review-addition" data-change-index="${changeIndex}" data-change-kind="substitution" data-change-part="new" tabindex="0">${markdownInlineToHtml(
+      )}</del><ins class="review-change review-addition" data-change-index="${changeIndex}" data-change-kind="substitution" data-change-part="new" contenteditable="false" tabindex="0">${markdownInlineToHtml(
         node.newValue,
       )}</ins>`;
     case 'comment':
-      return `<span class="comment" data-critic-type="comment">Comment: ${escapeHtml(node.value)}</span>`;
+      return `<span class="comment" data-critic-type="comment" contenteditable="false">Comment: ${escapeHtml(node.value)}</span>`;
     case 'highlight':
       return `<mark data-critic-type="highlight">${markdownInlineToHtml(node.value)}</mark>`;
   }
@@ -246,9 +316,10 @@ function isChangeNode(node: CriticMarkupNode): boolean {
 function showInlineActions(changeElement: HTMLElement): void {
   inlineReviewActions.dataset.changeIndex = changeElement.dataset.changeIndex ?? '';
   inlineReviewActions.hidden = false;
+  hideCommentPopover();
 
   const changeRect = changeElement.getBoundingClientRect();
-  const panel = renderedReview.closest<HTMLElement>('.preview-panel');
+  const panel = renderedReview.closest<HTMLElement>('.editor-surface');
   const panelRect = panel?.getBoundingClientRect() ?? renderedReview.getBoundingClientRect();
   const left = Math.max(8, Math.min(changeRect.left - panelRect.left, panelRect.width - 88));
   const top = Math.max(8, changeRect.top - panelRect.top - 38);
@@ -259,6 +330,100 @@ function showInlineActions(changeElement: HTMLElement): void {
 function hideInlineActions(): void {
   inlineReviewActions.hidden = true;
   inlineReviewActions.removeAttribute('data-change-index');
+}
+
+function applyRenderedEditAsSuggestion(): void {
+  if (activeViewMode !== 'revisions') {
+    renderEditorOutput();
+    return;
+  }
+
+  const baseline = editBaselineCriticMarkup || editorOutput.value;
+  const editedCriticMarkup = renderedReviewToCriticMarkup(renderedReview, activeViewMode);
+  editorOutput.value = beforeAfterToCriticMarkup(baseline, editedCriticMarkup);
+  editBaselineCriticMarkup = editorOutput.value;
+  hideInlineActions();
+  hideCommentPopover();
+  renderEditorOutput();
+  statusPill.textContent = 'Suggestion added';
+}
+
+function showCommentPopover(clientX: number, clientY: number): void {
+  hideInlineActions();
+  const selection = window.getSelection();
+  pendingCommentRange = selectionWithinRenderedReview(selection)
+    ? selection!.getRangeAt(0).cloneRange()
+    : null;
+
+  const panel = renderedReview.closest<HTMLElement>('.editor-surface');
+  const panelRect = panel?.getBoundingClientRect() ?? renderedReview.getBoundingClientRect();
+  const left = Math.max(8, Math.min(clientX - panelRect.left, panelRect.width - 260));
+  const top = Math.max(8, clientY - panelRect.top + 8);
+
+  commentPopover.hidden = false;
+  commentPopover.style.left = `${left}px`;
+  commentPopover.style.top = `${top}px`;
+  commentInput.value = '';
+  commentInput.focus();
+}
+
+function hideCommentPopover(): void {
+  commentPopover.hidden = true;
+  pendingCommentRange = null;
+}
+
+function addCommentFromSelection(): void {
+  const comment = commentInput.value.trim() || 'Comment';
+  const range = pendingCommentRange;
+  if (range === null || !renderedReview.contains(range.commonAncestorContainer)) {
+    hideCommentPopover();
+    return;
+  }
+
+  if (range.collapsed) {
+    const commentElement = createCommentElement(comment);
+    range.insertNode(commentElement);
+  } else {
+    const selectedFragment = range.extractContents();
+    const mark = document.createElement('mark');
+    mark.dataset.criticType = 'highlight';
+    mark.append(selectedFragment);
+    const commentElement = createCommentElement(comment);
+    range.insertNode(commentElement);
+    range.insertNode(mark);
+  }
+
+  window.getSelection()?.removeAllRanges();
+  editorOutput.value = renderedReviewToCriticMarkup(renderedReview, activeViewMode);
+  editBaselineCriticMarkup = editorOutput.value;
+  hideCommentPopover();
+  renderEditorOutput();
+  statusPill.textContent = 'Comment added';
+}
+
+function createCommentElement(comment: string): HTMLElement {
+  const element = document.createElement('span');
+  element.className = 'comment';
+  element.dataset.criticType = 'comment';
+  element.contentEditable = 'false';
+  element.textContent = `Comment: ${comment}`;
+  return element;
+}
+
+function selectionWithinRenderedReview(selection: Selection | null): boolean {
+  if (selection === null || selection.rangeCount === 0) {
+    return false;
+  }
+
+  const range = selection.getRangeAt(0);
+  return (
+    renderedReview.contains(range.commonAncestorContainer) ||
+    range.commonAncestorContainer === renderedReview
+  );
+}
+
+function clearLongTouchTimer(): void {
+  window.clearTimeout(longTouchTimer);
 }
 
 function renderedReviewToCriticMarkup(root: HTMLElement, viewMode: ViewMode): string {

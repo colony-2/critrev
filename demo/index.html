@@ -35,50 +35,79 @@
           </label>
         </article>
 
-        <article class="panel critic-panel">
+        <article class="panel editor-input-panel">
           <div class="panel-heading">
             <div>
-              <p class="stage-label">Stage 2</p>
-              <h2>review.critic.md</h2>
+              <p class="stage-label">Stage 2.1</p>
+              <h2>Raw Editor Input</h2>
             </div>
-            <button id="sync-review" type="button">Sync</button>
+            <div class="button-row">
+              <button id="sync-review" type="button">Sync</button>
+              <button id="load-editor" type="button">Load</button>
+            </div>
           </div>
           <label class="field">
-            <span>Editor boundary</span>
+            <span>review-input.critic.md</span>
             <textarea id="critic-input" data-testid="critic-input" spellcheck="false"></textarea>
           </label>
-          <div class="metrics" id="metrics" aria-label="CriticMarkup counts"></div>
-          <div class="change-list" id="change-list" aria-label="Review changes"></div>
         </article>
 
-        <article class="panel preview-panel">
+        <article class="panel editor-panel">
           <div class="panel-heading">
             <div>
-              <p class="stage-label">Stage 2</p>
-              <h2>Rendered Review</h2>
+              <p class="stage-label">Stage 2.2</p>
+              <h2>Review Editor</h2>
             </div>
           </div>
-          <div class="view-toggle" role="group" aria-label="Review display mode">
-            <button type="button" class="active" data-view-mode="revisions">Show revisions</button>
-            <button type="button" data-view-mode="reject">Preview reject all</button>
-            <button type="button" data-view-mode="accept">Preview accept all</button>
+          <div class="editor-shell">
+            <div class="editor-surface">
+              <div class="view-toggle" role="group" aria-label="Review display mode">
+                <button type="button" class="active" data-view-mode="revisions">Show revisions</button>
+                <button type="button" data-view-mode="reject">Preview reject all</button>
+                <button type="button" data-view-mode="accept">Preview accept all</button>
+              </div>
+              <div
+                class="rendered-review"
+                id="rendered-review"
+                data-testid="rendered-review"
+                contenteditable="true"
+                spellcheck="true"
+                role="textbox"
+                aria-label="Rendered review text"></div>
+              <div
+                class="inline-review-actions"
+                id="inline-review-actions"
+                data-testid="inline-review-actions"
+                hidden>
+                <button type="button" data-inline-decision="accept" aria-label="Accept suggestion">✓</button>
+                <button type="button" data-inline-decision="reject" aria-label="Reject suggestion">×</button>
+              </div>
+              <form class="comment-popover" id="comment-popover" data-testid="comment-popover" hidden>
+                <label class="comment-field">
+                  <span>Comment</span>
+                  <input id="comment-input" data-testid="comment-input" autocomplete="off" />
+                </label>
+                <button type="submit">Add comment</button>
+              </form>
+            </div>
+            <aside class="suggestion-pane" aria-label="Suggestions">
+              <div class="metrics" id="metrics" aria-label="CriticMarkup counts"></div>
+              <div class="change-list" id="change-list" aria-label="Review changes"></div>
+            </aside>
           </div>
-          <div
-            class="rendered-review"
-            id="rendered-review"
-            data-testid="rendered-review"
-            contenteditable="true"
-            spellcheck="true"
-            role="textbox"
-            aria-label="Rendered review text"></div>
-          <div
-            class="inline-review-actions"
-            id="inline-review-actions"
-            data-testid="inline-review-actions"
-            hidden>
-            <button type="button" data-inline-decision="accept" aria-label="Accept suggestion">✓</button>
-            <button type="button" data-inline-decision="reject" aria-label="Reject suggestion">×</button>
+        </article>
+
+        <article class="panel editor-output-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="stage-label">Stage 2.3</p>
+              <h2>Raw Editor Output</h2>
+            </div>
           </div>
+          <label class="field">
+            <span>review-output.critic.md</span>
+            <textarea id="critic-output" data-testid="critic-output" readonly spellcheck="false"></textarea>
+          </label>
         </article>
 
         <article class="panel output-panel">
