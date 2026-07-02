@@ -111,6 +111,24 @@ button:hover {
   background: #f1f5f7;
 }
 
+.view-toggle {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.view-toggle button {
+  min-height: 34px;
+}
+
+.view-toggle button.active {
+  border-color: #188038;
+  background: #e6f4ea;
+  color: #137333;
+  font-weight: 700;
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -146,7 +164,12 @@ textarea:focus {
   min-height: 224px;
 }
 
+.preview-panel {
+  position: relative;
+}
+
 .rendered-review {
+  position: relative;
   min-height: 224px;
   border: 1px solid #cbd3d8;
   border-radius: 7px;
@@ -155,26 +178,20 @@ textarea:focus {
   white-space: pre-wrap;
 }
 
-ins,
-del,
-mark,
-.comment,
-.substitution {
-  border-radius: 5px;
-  padding: 1px 3px;
+.rendered-review:focus {
+  outline: 2px solid #2f6fed;
+  outline-offset: 1px;
 }
 
 ins {
-  background: #dcf7df;
-  color: #155724;
-  text-decoration: underline;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 2px;
+  color: #188038;
+  text-decoration: none;
 }
 
 del {
-  background: #fde2e1;
-  color: #8a1c16;
+  color: inherit;
+  text-decoration-color: #188038;
+  text-decoration-line: line-through;
   text-decoration-thickness: 2px;
 }
 
@@ -183,26 +200,48 @@ mark {
   color: inherit;
 }
 
-.substitution {
-  display: inline-flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 4px;
-  background: #eef3f6;
+.review-change {
+  cursor: pointer;
 }
 
-.arrow {
-  color: #5f6368;
-  font-size: 12px;
-  font-weight: 700;
+.review-change:focus {
+  outline: 1px solid #188038;
+  outline-offset: 1px;
 }
 
 .comment {
   display: inline-block;
+  border-radius: 5px;
   border: 1px solid #e2c15c;
+  padding: 1px 3px;
   background: #fff8da;
   color: #4d3b00;
   font-size: 13px;
+}
+
+.inline-review-actions {
+  position: absolute;
+  z-index: 10;
+  display: inline-flex;
+  gap: 4px;
+  border: 1px solid #c7d2d9;
+  border-radius: 8px;
+  padding: 4px;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgb(60 64 67 / 18%);
+}
+
+.inline-review-actions[hidden] {
+  display: none;
+}
+
+.inline-review-actions button {
+  width: 32px;
+  min-height: 28px;
+  border-radius: 6px;
+  padding: 0;
+  font-size: 16px;
+  font-weight: 800;
 }
 
 .metrics {
@@ -243,24 +282,20 @@ mark {
   background: #fbfcfd;
 }
 
-.change-card code {
-  display: inline-block;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  border: 1px solid #d4dce1;
-  border-radius: 5px;
-  padding: 2px 5px;
-  background: #ffffff;
-  color: #202124;
-  font-size: 12px;
-}
-
 .change-type {
   margin: 0 0 6px;
   color: #5f6368;
   font-size: 12px;
   font-weight: 700;
   text-transform: capitalize;
+}
+
+.change-description {
+  margin: 0;
+}
+
+.change-description q {
+  overflow-wrap: anywhere;
 }
 
 .change-actions {
@@ -286,10 +321,14 @@ mark {
     grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.05fr);
   }
 
-  .preview-panel,
-  .output-panel {
-    min-height: 360px;
+  .view-toggle {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+.preview-panel,
+.output-panel {
+  min-height: 360px;
+}
 
   .change-card {
     grid-template-columns: minmax(0, 1fr) auto;

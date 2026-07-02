@@ -58,7 +58,27 @@
               <h2>Rendered Review</h2>
             </div>
           </div>
-          <div class="rendered-review" id="rendered-review" data-testid="rendered-review"></div>
+          <div class="view-toggle" role="group" aria-label="Review display mode">
+            <button type="button" class="active" data-view-mode="revisions">Show revisions</button>
+            <button type="button" data-view-mode="reject">Preview reject all</button>
+            <button type="button" data-view-mode="accept">Preview accept all</button>
+          </div>
+          <div
+            class="rendered-review"
+            id="rendered-review"
+            data-testid="rendered-review"
+            contenteditable="true"
+            spellcheck="true"
+            role="textbox"
+            aria-label="Rendered review text"></div>
+          <div
+            class="inline-review-actions"
+            id="inline-review-actions"
+            data-testid="inline-review-actions"
+            hidden>
+            <button type="button" data-inline-decision="accept" aria-label="Accept suggestion">✓</button>
+            <button type="button" data-inline-decision="reject" aria-label="Reject suggestion">×</button>
+          </div>
         </article>
 
         <article class="panel output-panel">

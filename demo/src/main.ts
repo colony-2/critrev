@@ -11,6 +11,8 @@ import {
   type CriticMarkupNode,
 } from '../../src/index';
 
+type ViewMode = 'accept' | 'reject' | 'revisions';
+
 const sampleBefore = 'this is **a great idea** for us.\n\nPlease ship the first draft.';
 const sampleAfter = 'this **great** for us\n\nPlease ship the polished draft.';
 
@@ -22,7 +24,12 @@ const cleanOutput = getElement<HTMLTextAreaElement>('clean-output');
 const renderedReview = getElement<HTMLElement>('rendered-review');
 const metrics = getElement<HTMLElement>('metrics');
 const changeList = getElement<HTMLElement>('change-list');
+const inlineReviewActions = getElement<HTMLElement>('inline-review-actions');
 const statusPill = getElement<HTMLElement>('status-pill');
+const viewModeButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('[data-view-mode]'),
+);
+let activeViewMode: ViewMode = 'revisions';
 
 beforeInput.value = sampleBefore;
 afterInput.value = sampleAfter;
@@ -48,9 +55,55 @@ changeList.addEventListener('click', event => {
 
   const changeIndex = Number(button.dataset.changeIndex);
   const decision = button.dataset.decision as CriticMarkupChangeDecision;
-  criticInput.value = resolveCriticMarkupChange(criticInput.value, changeIndex, decision);
-  renderCriticMarkup();
+  resolveChange(changeIndex, decision);
 });
+renderedReview.addEventListener('click', event => {
+  const changeElement = (event.target as HTMLElement).closest<HTMLElement>(
+    '[data-change-index]',
+  );
+  if (changeElement === null) {
+    hideInlineActions();
+    return;
+  }
+  showInlineActions(changeElement);
+});
+renderedReview.addEventListener('keyup', () => {
+  const selection = window.getSelection();
+  const node = selection?.anchorNode;
+  const element =
+    node instanceof HTMLElement ? node : node?.parentElement ?? null;
+  const changeElement = element?.closest<HTMLElement>('[data-change-index]');
+  if (changeElement === undefined || changeElement === null) {
+    hideInlineActions();
+    return;
+  }
+  showInlineActions(changeElement);
+});
+renderedReview.addEventListener('input', () => {
+  statusPill.textContent = 'Preview edited';
+});
+inlineReviewActions.addEventListener('click', event => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+    'button[data-inline-decision]',
+  );
+  if (button === null) {
+    return;
+  }
+
+  const changeIndex = Number(inlineReviewActions.dataset.changeIndex);
+  const decision = button.dataset.inlineDecision as CriticMarkupChangeDecision;
+  resolveChange(changeIndex, decision);
+});
+for (const button of viewModeButtons) {
+  button.addEventListener('click', () => {
+    activeViewMode = button.dataset.viewMode as ViewMode;
+    for (const nextButton of viewModeButtons) {
+      nextButton.classList.toggle('active', nextButton === button);
+    }
+    hideInlineActions();
+    renderCriticMarkup();
+  });
+}
 
 syncCriticMarkup();
 
@@ -66,7 +119,7 @@ function updateGeneratedOnly(): void {
 
 function renderCriticMarkup(): void {
   const nodes = parseCriticMarkup(criticInput.value);
-  renderedReview.innerHTML = renderNodes(nodes);
+  renderedReview.innerHTML = renderNodes(nodes, activeViewMode);
   finalOutput.value = finalizeCriticMarkup(nodes);
   cleanOutput.value = finalizeCriticMarkup(nodes, {preserveComments: false});
   metrics.innerHTML = renderMetrics(nodes);
@@ -75,6 +128,15 @@ function renderCriticMarkup(): void {
     criticInput.value === beforeAfterToCriticMarkup(beforeInput.value, afterInput.value)
       ? 'Synced'
       : 'Edited';
+}
+
+function resolveChange(
+  changeIndex: number,
+  decision: CriticMarkupChangeDecision,
+): void {
+  criticInput.value = resolveCriticMarkupChange(criticInput.value, changeIndex, decision);
+  hideInlineActions();
+  renderCriticMarkup();
 }
 
 function renderChangeList(changes: readonly CriticMarkupChange[]): string {
@@ -89,9 +151,7 @@ function renderChangeCard(change: CriticMarkupChange): string {
   return `<section class="change-card">
     <div>
       <p class="change-type">${change.type}</p>
-      <code>${escapeHtml(change.oldValue || 'empty')}</code>
-      <span class="arrow">to</span>
-      <code>${escapeHtml(change.newValue || 'empty')}</code>
+      <p class="change-description">${describeChange(change)}</p>
     </div>
     <div class="change-actions">
       <button type="button" data-testid="accept-change" data-change-index="${change.changeIndex}" data-decision="accept">Accept</button>
@@ -100,37 +160,102 @@ function renderChangeCard(change: CriticMarkupChange): string {
   </section>`;
 }
 
-function renderNodes(nodes: readonly CriticMarkupNode[]): string {
+function renderNodes(nodes: readonly CriticMarkupNode[], viewMode: ViewMode): string {
   if (nodes.length === 0) {
     return '<p class="empty">No content</p>';
   }
 
-  return nodes.map(renderNode).join('');
+  let changeIndex = 0;
+  let html = '';
+  for (const node of nodes) {
+    html += renderNode(node, viewMode, changeIndex);
+    if (isChangeNode(node)) {
+      changeIndex += 1;
+    }
+  }
+  return html;
 }
 
-function renderNode(node: CriticMarkupNode): string {
+function renderNode(
+  node: CriticMarkupNode,
+  viewMode: ViewMode,
+  changeIndex: number,
+): string {
   switch (node.type) {
     case 'text':
       return markdownInlineToHtml(node.value);
     case 'addition':
-      return `<ins>${markdownInlineToHtml(node.value)}</ins>`;
+      if (viewMode === 'reject') {
+        return '';
+      }
+      if (viewMode === 'accept') {
+        return markdownInlineToHtml(node.value);
+      }
+      return `<ins class="review-change review-addition" data-change-index="${changeIndex}" tabindex="0">${markdownInlineToHtml(node.value)}</ins>`;
     case 'deletion':
-      return `<del>${markdownInlineToHtml(node.value)}</del>`;
+      if (viewMode === 'accept') {
+        return '';
+      }
+      if (viewMode === 'reject') {
+        return markdownInlineToHtml(node.value);
+      }
+      return `<del class="review-change review-deletion" data-change-index="${changeIndex}" tabindex="0">${markdownInlineToHtml(node.value)}</del>`;
     case 'substitution':
-      return `<span class="substitution"><del>${markdownInlineToHtml(
+      if (viewMode === 'accept') {
+        return markdownInlineToHtml(node.newValue);
+      }
+      if (viewMode === 'reject') {
+        return markdownInlineToHtml(node.oldValue);
+      }
+      return `<del class="review-change review-deletion" data-change-index="${changeIndex}" tabindex="0">${markdownInlineToHtml(
         node.oldValue,
-      )}</del><span class="arrow">to</span><ins>${markdownInlineToHtml(
+      )}</del><ins class="review-change review-addition" data-change-index="${changeIndex}" tabindex="0">${markdownInlineToHtml(
         node.newValue,
-      )}</ins></span>`;
+      )}</ins>`;
     case 'comment':
       return `<span class="comment">Comment: ${escapeHtml(node.value)}</span>`;
     case 'highlight':
       return `<mark>${markdownInlineToHtml(node.value)}</mark>`;
   }
+  return assertNever(node);
+}
+
+function describeChange(change: CriticMarkupChange): string {
+  switch (change.type) {
+    case 'addition':
+      return `<q>${markdownInlineToHtml(change.newValue)}</q> added`;
+    case 'deletion':
+      return `<q>${markdownInlineToHtml(change.oldValue)}</q> deleted`;
+    case 'substitution':
+      return `<q>${markdownInlineToHtml(change.oldValue)}</q> changed to <q>${markdownInlineToHtml(change.newValue)}</q>`;
+  }
+  return '';
+}
+
+function isChangeNode(node: CriticMarkupNode): boolean {
+  return node.type === 'addition' || node.type === 'deletion' || node.type === 'substitution';
+}
+
+function showInlineActions(changeElement: HTMLElement): void {
+  inlineReviewActions.dataset.changeIndex = changeElement.dataset.changeIndex ?? '';
+  inlineReviewActions.hidden = false;
+
+  const changeRect = changeElement.getBoundingClientRect();
+  const panel = renderedReview.closest<HTMLElement>('.preview-panel');
+  const panelRect = panel?.getBoundingClientRect() ?? renderedReview.getBoundingClientRect();
+  const left = Math.max(8, Math.min(changeRect.left - panelRect.left, panelRect.width - 88));
+  const top = Math.max(8, changeRect.top - panelRect.top - 38);
+  inlineReviewActions.style.left = `${left}px`;
+  inlineReviewActions.style.top = `${top}px`;
+}
+
+function hideInlineActions(): void {
+  inlineReviewActions.hidden = true;
+  inlineReviewActions.removeAttribute('data-change-index');
 }
 
 function renderMetrics(nodes: readonly CriticMarkupNode[]): string {
-  const counts = {
+  const counts: Record<Exclude<CriticMarkupNode['type'], 'text'>, number> = {
     addition: 0,
     comment: 0,
     deletion: 0,
@@ -153,8 +278,7 @@ function markdownInlineToHtml(value: string): string {
   const escaped = escapeHtml(value);
   return escaped
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\n/g, '<br />');
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
 function escapeHtml(value: string): string {
@@ -171,4 +295,8 @@ function getElement<T extends HTMLElement>(id: string): T {
     throw new Error(`Missing element #${id}`);
   }
   return element as T;
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unexpected value: ${JSON.stringify(value)}`);
 }
