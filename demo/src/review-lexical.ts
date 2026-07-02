@@ -6,8 +6,10 @@ import {
   $createParagraphNode,
   $createTextNode,
   $getRoot,
+  $getSelection,
   $isElementNode,
   $isLineBreakNode,
+  $isRangeSelection,
   $isTextNode,
   createEditor,
   ElementNode,
@@ -44,7 +46,12 @@ export type ReviewLexicalAdapter = {
 };
 
 export type ReviewLexicalAdapterOptions = {
-  onChange(model: ReviewModel): void;
+  onChange(model: ReviewModel, selectionOffset: number | null): void;
+};
+
+type ReviewLexicalSnapshot = {
+  readonly model: ReviewModel;
+  readonly selectionOffset: number | null;
 };
 
 type ReviewSuggestionMeta = {
@@ -257,6 +264,10 @@ export function createReviewLexicalAdapter(
     },
   });
 
+  editor.setRootElement(rootElement);
+  rootElement.dataset.editorEngine = 'lexical';
+  rootElement.contentEditable = 'true';
+
   const cleanup = mergeRegister(
     registerRichText(editor),
     registerHistory(editor, createEmptyHistoryState(), 300),
@@ -265,14 +276,11 @@ export function createReviewLexicalAdapter(
         return;
       }
 
-      currentModel = editorStateToReviewModel(editorState);
-      options.onChange(cloneReviewModel(currentModel));
+      const snapshot = editorStateToReviewSnapshot(editorState);
+      currentModel = snapshot.model;
+      options.onChange(cloneReviewModel(currentModel), snapshot.selectionOffset);
     }),
   );
-
-  editor.setRootElement(rootElement);
-  rootElement.dataset.editorEngine = 'lexical';
-  rootElement.contentEditable = 'true';
 
   return {
     dispose() {
@@ -293,7 +301,16 @@ export function createReviewLexicalAdapter(
       return readDomSelectionRange(rootElement);
     },
     restoreSelectionOffset(offset: number | null) {
-      restoreDomSelectionOffset(rootElement, offset);
+      if (offset === null) {
+        return;
+      }
+      rootElement.focus();
+      editor.update(
+        () => {
+          selectLexicalOffset(offset);
+        },
+        {discrete: true},
+      );
     },
     setEditable(editable: boolean) {
       editor.setEditable(editable);
@@ -358,12 +375,14 @@ function appendTextWithLineBreaks(
   }
 }
 
-function editorStateToReviewModel(editorState: EditorState): ReviewModel {
+function editorStateToReviewSnapshot(editorState: EditorState): ReviewLexicalSnapshot {
   return editorState.read(() => {
     const suggestions = new Map<string, MutableSuggestion>();
     const comments = new Map<string, ReviewComment>();
     const highlights = new Map<string, ReviewHighlight>();
     let text = '';
+    let selectionOffset: number | null = null;
+    const selectionPoint = collapsedSelectionPoint();
 
     const appendText = (value: string): ReviewRange => {
       const start = text.length;
@@ -372,6 +391,10 @@ function editorStateToReviewModel(editorState: EditorState): ReviewModel {
     };
 
     const appendNode = (node: LexicalNode): void => {
+      if (selectionPoint !== null && selectionPoint.key === node.getKey()) {
+        selectionOffset = text.length + offsetInsideSelectionNode(node, selectionPoint.offset);
+      }
+
       if ($isReviewCommentAnchorNode(node)) {
         const comment = node.getComment();
         comments.set(comment.id, {
@@ -415,6 +438,7 @@ function editorStateToReviewModel(editorState: EditorState): ReviewModel {
     }
 
     return {
+      model: {
       comments: Array.from(comments.values()).sort(compareRanges),
       highlights: Array.from(highlights.values()).sort(compareRanges),
       suggestions: Array.from(suggestions.values())
@@ -422,8 +446,88 @@ function editorStateToReviewModel(editorState: EditorState): ReviewModel {
         .map(toReviewSuggestion)
         .sort((left, right) => suggestionModelStart(left) - suggestionModelStart(right)),
       text,
+      },
+      selectionOffset,
     };
   });
+}
+
+function collapsedSelectionPoint(): {key: string; offset: number} | null {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
+    return null;
+  }
+
+  return {
+    key: selection.anchor.key,
+    offset: selection.anchor.offset,
+  };
+}
+
+function offsetInsideSelectionNode(node: LexicalNode, offset: number): number {
+  if ($isTextNode(node)) {
+    return Math.min(offset, node.getTextContent().length);
+  }
+
+  if (!$isElementNode(node)) {
+    return 0;
+  }
+
+  return node
+    .getChildren()
+    .slice(0, offset)
+    .reduce((total, child) => total + child.getTextContent().length, 0);
+}
+
+function selectLexicalOffset(offset: number): void {
+  let remaining = Math.max(0, offset);
+
+  const visit = (node: LexicalNode): boolean => {
+    if ($isReviewCommentAnchorNode(node)) {
+      return false;
+    }
+
+    if ($isTextNode(node)) {
+      const length = node.getTextContent().length;
+      if (remaining <= length) {
+        node.select(remaining, remaining);
+        return true;
+      }
+      remaining -= length;
+      return false;
+    }
+
+    if ($isLineBreakNode(node)) {
+      if (remaining <= 1) {
+        const parent = node.getParent();
+        if (parent !== null) {
+          parent.select(parent.getChildren().indexOf(node) + 1);
+          return true;
+        }
+      }
+      remaining -= 1;
+      return false;
+    }
+
+    if ($isElementNode(node)) {
+      for (const child of node.getChildren()) {
+        if (visit(child)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  };
+
+  const root = $getRoot();
+  for (const child of root.getChildren()) {
+    if (visit(child)) {
+      return;
+    }
+  }
+
+  root.selectEnd();
 }
 
 function applyReviewMetaToModel(

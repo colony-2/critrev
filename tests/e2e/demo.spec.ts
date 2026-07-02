@@ -21,8 +21,10 @@ test('shows each CriticMarkup pipeline stage', async ({page}) => {
   await expect(page.getByTestId('critic-input')).toHaveValue(sampleEditorMarkup);
   await expect(page.getByTestId('critic-output')).toHaveValue(sampleEditorMarkup);
 
-  await expect(page.getByTestId('rendered-review')).toContainText('is a great idea for us.');
-  await expect(page.getByTestId('rendered-review')).toContainText('great for us');
+  await expect(page.getByTestId('rendered-review')).toHaveAttribute('data-editor-engine', 'lexical');
+  await expect(page.getByTestId('rendered-review')).toHaveAttribute('data-lexical-editor', 'true');
+  await expect(page.getByTestId('rendered-review')).toContainText('is **a great idea** for us.');
+  await expect(page.getByTestId('rendered-review')).toContainText('**great** for us');
   await expect(page.getByTestId('rendered-review')).not.toContainText(sampleRangeComment);
   await expect(page.getByTestId('rendered-review')).not.toContainText(samplePointComment);
   await expect(page.getByTestId('comment-anchor')).toHaveCount(1);
@@ -85,13 +87,13 @@ test('toggles between revisions, reject-all preview, and accept-all preview', as
   const renderedReview = page.getByTestId('rendered-review');
   await page.getByTestId('view-mode-toggle').click();
   await page.getByRole('button', {name: 'Preview reject all'}).click();
-  await expect(renderedReview).toContainText('this is a great idea for us.');
+  await expect(renderedReview).toContainText('this is **a great idea** for us.');
   await expect(renderedReview).toContainText('the first draft.');
   await expect(renderedReview).toHaveAttribute('contenteditable', 'false');
 
   await page.getByTestId('view-mode-toggle').click();
   await page.getByRole('button', {name: 'Preview accept all'}).click();
-  await expect(renderedReview).toContainText('this great for us');
+  await expect(renderedReview).toContainText('this **great** for us');
   await expect(renderedReview).toContainText('the polished draft.');
   await expect(renderedReview).toHaveAttribute('contenteditable', 'false');
 
@@ -110,12 +112,10 @@ test('rendered review edits become suggestions instead of hard changes', async (
 
   const renderedReview = page.getByTestId('rendered-review');
   await expect(renderedReview).toHaveAttribute('contenteditable', 'true');
-  await renderedReview.evaluate(element => {
-    element.insertAdjacentText('beforeend', ' now');
-    element.dispatchEvent(new InputEvent('input', {bubbles: true, data: ' now'}));
-  });
+  await setRenderedCaret(page, 'Plain text'.length);
+  await page.keyboard.type(' now');
 
-  await expect(page.locator('#status-pill')).toHaveText('Suggestion added');
+  await expect(page.locator('#status-pill')).toHaveText(/Suggestion/);
   await expect(page.getByTestId('critic-input')).toHaveValue('Plain text');
   await expect(page.getByTestId('critic-output')).toHaveValue('Plain text{++ now++}');
   await expect(page.locator('.change-description')).toContainText('now added');
@@ -172,14 +172,8 @@ test('editing inside an existing addition keeps it editable as one suggestion', 
   await page.getByTestId('critic-input').fill('Plain {++abcd++}');
   await page.getByRole('button', {name: 'Load'}).click();
 
-  await page.getByTestId('rendered-review').evaluate(element => {
-    const addition = element.querySelector('ins');
-    if (addition?.firstChild === null || addition?.firstChild === undefined) {
-      throw new Error('Missing editable addition text');
-    }
-    addition.firstChild.nodeValue = 'acd';
-    element.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'deleteContentBackward'}));
-  });
+  await setRenderedCaret(page, 8);
+  await page.keyboard.press('Backspace');
 
   await expect(page.getByTestId('critic-output')).toHaveValue('Plain {++acd++}');
   await expect(page.getByTestId('rendered-review')).not.toContainText('{++');
@@ -193,14 +187,8 @@ test('editing inside an existing deletion keeps it editable as one suggestion', 
   await page.getByTestId('critic-input').fill('Plain {--abcd--}');
   await page.getByRole('button', {name: 'Load'}).click();
 
-  await page.getByTestId('rendered-review').evaluate(element => {
-    const deletion = element.querySelector('del');
-    if (deletion?.firstChild === null || deletion?.firstChild === undefined) {
-      throw new Error('Missing editable deletion text');
-    }
-    deletion.firstChild.nodeValue = 'acd';
-    element.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'deleteContentBackward'}));
-  });
+  await setRenderedCaret(page, 8);
+  await page.keyboard.press('Backspace');
 
   await expect(page.getByTestId('critic-output')).toHaveValue('Plain {--acd--}');
   await expect(page.getByTestId('rendered-review')).not.toContainText('{--');
@@ -211,17 +199,15 @@ test('editing inside an existing deletion keeps it editable as one suggestion', 
 test('rendered edits preserve unresolved suggestion markers', async ({page}) => {
   await page.goto('/');
 
-  await page.getByTestId('rendered-review').evaluate(element => {
-    element.insertAdjacentText('beforeend', ' Extra note.');
-    element.dispatchEvent(new InputEvent('input', {bubbles: true, data: ' Extra note.'}));
-  });
+  await setRenderedCaret(page, 5);
+  await page.keyboard.type('Extra note. ');
 
   await expect(page.getByTestId('critic-input')).toHaveValue(sampleEditorMarkup);
   await expect(page.getByTestId('critic-output')).toHaveValue(
-    `${sampleEditorMarkup}{++ Extra note.++}`,
+    sampleEditorMarkup.replace('this ', 'this {++Extra note. ++}'),
   );
   await expect(page.getByTestId('final-output')).toHaveValue(
-    `this **great** for us\n\n{==Please ship==}{>>${sampleRangeComment}<<} the polished draft.{>>${samplePointComment}<<} Extra note.`,
+    `this Extra note. **great** for us\n\n{==Please ship==}{>>${sampleRangeComment}<<} the polished draft.{>>${samplePointComment}<<}`,
   );
 });
 
@@ -330,17 +316,29 @@ test('phone viewport exposes the same review controls', async ({page}) => {
 async function selectRenderedText(page: import('@playwright/test').Page, start: number, end: number) {
   await page.getByTestId('rendered-review').evaluate(
     (element, range) => {
-      const textNode = Array.from(element.childNodes).find(
-        node => node.nodeType === Node.TEXT_NODE && (node.nodeValue ?? '').length >= range.end,
-      );
-      if (textNode === undefined) {
-        throw new Error('Could not find selectable rendered text');
-      }
+      const textPosition = (targetOffset: number): {node: Node; offset: number} => {
+        let remaining = Math.max(0, targetOffset);
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        let node = walker.nextNode();
+
+        while (node !== null) {
+          const length = node.nodeValue?.length ?? 0;
+          if (remaining <= length) {
+            return {node, offset: remaining};
+          }
+          remaining -= length;
+          node = walker.nextNode();
+        }
+
+        return {node: element, offset: element.childNodes.length};
+      };
 
       const selection = window.getSelection();
       const domRange = document.createRange();
-      domRange.setStart(textNode, range.start);
-      domRange.setEnd(textNode, range.end);
+      const startPosition = textPosition(range.start);
+      const endPosition = textPosition(range.end);
+      domRange.setStart(startPosition.node, startPosition.offset);
+      domRange.setEnd(endPosition.node, endPosition.offset);
       selection?.removeAllRanges();
       selection?.addRange(domRange);
     },

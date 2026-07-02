@@ -12,11 +12,13 @@ import {
   type ReviewChange,
   type ReviewChangeDecision,
   type ReviewComment,
-  type ReviewHighlight,
   type ReviewModel,
   type ReviewRange,
-  type ReviewSuggestion,
 } from '../../src/index';
+import {
+  createReviewLexicalAdapter,
+  type ReviewLexicalAdapter,
+} from './review-lexical';
 
 type ViewMode = 'accept' | 'reject' | 'revisions';
 
@@ -51,7 +53,10 @@ let activeChangeIndex: number | null = null;
 let editorModel: ReviewModel = emptyReviewModel();
 let editBaselineModel: ReviewModel = emptyReviewModel();
 let longTouchTimer = 0;
-let pendingCommentRange: Range | null = null;
+let pendingCommentRange: ReviewRange | null = null;
+const reviewEditor: ReviewLexicalAdapter = createReviewLexicalAdapter(renderedReview, {
+  onChange: applyLexicalEditAsSuggestion,
+});
 
 beforeInput.value = sampleBefore;
 afterInput.value = sampleAfter;
@@ -110,9 +115,6 @@ changeList.addEventListener('focusin', event => {
     setActiveChangeIndex(Number(card.dataset.suggestionIndex));
   }
 });
-renderedReview.addEventListener('beforeinput', () => {
-  editBaselineModel = cloneReviewModel(editorModel);
-});
 renderedReview.addEventListener('click', event => {
   const commentAnchor = (event.target as HTMLElement).closest<HTMLElement>(
     '[data-comment-value]',
@@ -168,9 +170,6 @@ renderedReview.addEventListener('pointerdown', event => {
 });
 renderedReview.addEventListener('pointercancel', clearLongTouchTimer);
 renderedReview.addEventListener('pointerup', clearLongTouchTimer);
-renderedReview.addEventListener('input', () => {
-  applyRenderedEditAsSuggestion();
-});
 inlineReviewActions.addEventListener('click', event => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
     'button[data-inline-decision]',
@@ -245,9 +244,14 @@ function updateGeneratedOnly(): void {
 
 function renderEditorOutput(): void {
   const visibleModel = modelForView(editorModel, activeViewMode);
-  renderedReview.innerHTML = renderReviewModel(visibleModel, activeViewMode);
-  renderedReview.contentEditable = activeViewMode === 'revisions' ? 'true' : 'false';
+  reviewEditor.setModel(visibleModel);
+  reviewEditor.setEditable(activeViewMode === 'revisions');
   refreshDerivedPanels();
+}
+
+function rerenderEditorAtSelectionOffset(selectionOffset: number | null): void {
+  renderEditorOutput();
+  reviewEditor.restoreSelectionOffset(selectionOffset);
 }
 
 function refreshDerivedPanels(): void {
@@ -298,114 +302,6 @@ function renderChangeCard(change: ReviewChange): string {
   </section>`;
 }
 
-function renderReviewModel(model: ReviewModel, viewMode: ViewMode): string {
-  if (model.text.length === 0) {
-    return '<p class="empty">No content</p>';
-  }
-
-  const boundaries = modelBoundaries(model);
-  let html = '';
-  for (let index = 0; index < boundaries.length; index += 1) {
-    const start = boundaries[index];
-    const end = boundaries[index + 1];
-    if (start === undefined) {
-      continue;
-    }
-
-    html += renderPointCommentsAt(model, start);
-    if (end === undefined || end === start) {
-      continue;
-    }
-
-    html += renderTextSegment(model, {start, end});
-  }
-  return html;
-}
-
-function modelBoundaries(model: ReviewModel): number[] {
-  const boundaries = new Set<number>([0, model.text.length]);
-  for (const suggestion of model.suggestions) {
-    addRangeBoundaries(boundaries, suggestion.oldRange);
-    addRangeBoundaries(boundaries, suggestion.newRange);
-  }
-  for (const comment of model.comments) {
-    boundaries.add(comment.start);
-    boundaries.add(comment.end);
-  }
-  for (const highlight of model.highlights) {
-    boundaries.add(highlight.start);
-    boundaries.add(highlight.end);
-  }
-  return Array.from(boundaries).sort((left, right) => left - right);
-}
-
-function addRangeBoundaries(boundaries: Set<number>, range: ReviewRange | undefined): void {
-  if (range === undefined) {
-    return;
-  }
-  boundaries.add(range.start);
-  boundaries.add(range.end);
-}
-
-function renderTextSegment(model: ReviewModel, range: ReviewRange): string {
-  const value = markdownInlineToHtml(model.text.slice(range.start, range.end));
-  const suggestionPart = suggestionPartForRange(model, range);
-  const comment = model.comments.find(
-    item => item.start !== item.end && item.start <= range.start && item.end >= range.end,
-  );
-  const highlight = model.highlights.find(
-    item => item.start <= range.start && item.end >= range.end,
-  );
-
-  if (suggestionPart !== null) {
-    const changeIndex = model.suggestions.findIndex(
-      suggestion => suggestion.id === suggestionPart.suggestion.id,
-    );
-    const tag = suggestionPart.part === 'new' ? 'ins' : 'del';
-    const className = suggestionPart.part === 'new'
-      ? 'review-change review-addition'
-      : 'review-change review-deletion';
-    const commentAttributes = comment === undefined ? '' : commentDataAttributes(comment);
-    return `<${tag} class="${className}" data-suggestion-id="${suggestionPart.suggestion.id}" data-suggestion-part="${suggestionPart.part}" data-change-index="${changeIndex}" data-change-kind="${suggestionPart.suggestion.type}"${commentAttributes} tabindex="0">${value}</${tag}>`;
-  }
-
-  if (comment !== undefined) {
-    return `<mark ${commentDataAttributes(comment).trim()} data-testid="range-comment" tabindex="0">${value}</mark>`;
-  }
-
-  if (highlight !== undefined) {
-    return `<mark data-highlight-id="${highlight.id}">${value}</mark>`;
-  }
-
-  return value;
-}
-
-function suggestionPartForRange(
-  model: ReviewModel,
-  range: ReviewRange,
-): {part: 'new' | 'old'; suggestion: ReviewSuggestion} | null {
-  for (const suggestion of model.suggestions) {
-    if (rangeContains(suggestion.oldRange, range)) {
-      return {part: 'old', suggestion};
-    }
-    if (rangeContains(suggestion.newRange, range)) {
-      return {part: 'new', suggestion};
-    }
-  }
-  return null;
-}
-
-function rangeContains(container: ReviewRange | undefined, range: ReviewRange): boolean {
-  return container !== undefined && container.start <= range.start && container.end >= range.end;
-}
-
-function renderPointCommentsAt(model: ReviewModel, offset: number): string {
-  return model.comments
-    .filter(comment => comment.start === offset && comment.end === offset)
-    .map(renderCommentAnchor)
-    .join('');
-}
-
 function describeChange(change: ReviewChange): string {
   switch (change.type) {
     case 'addition':
@@ -416,18 +312,6 @@ function describeChange(change: ReviewChange): string {
       return `<q>${markdownInlineToHtml(change.oldValue)}</q> changed to <q>${markdownInlineToHtml(change.newValue)}</q>`;
   }
   return '';
-}
-
-function renderCommentAnchor(comment: ReviewComment): string {
-  return `<button type="button" class="comment-anchor" data-comment-id="${comment.id}" data-comment-value="${escapeHtml(comment.value)}" data-testid="comment-anchor" contenteditable="false" aria-label="Show comment">${commentIconSvg()}</button>`;
-}
-
-function commentIconSvg(): string {
-  return `<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 5h14v10H8l-3 3V5Z"></path></svg>`;
-}
-
-function commentDataAttributes(comment: ReviewComment): string {
-  return ` data-comment-id="${comment.id}" data-comment-value="${escapeHtml(comment.value)}"`;
 }
 
 function showInlineActions(changeElement: HTMLElement): void {
@@ -473,14 +357,16 @@ function syncActiveSuggestionState(): void {
   }
 }
 
-function applyRenderedEditAsSuggestion(): void {
+function applyLexicalEditAsSuggestion(
+  domModel: ReviewModel,
+  selectionOffset: number | null,
+): void {
   if (activeViewMode !== 'revisions') {
     renderEditorOutput();
     return;
   }
 
-  const selectionOffset = renderedSelectionOffset();
-  const domModel = renderedDomToReviewModel(renderedReview, editBaselineModel);
+  const diff = textDiff(editBaselineModel.text, domModel.text);
   const nextModel = reconcileRenderedEdit(editBaselineModel, domModel);
   const shouldRerenderEditor = nextModel !== domModel;
   editorModel = nextModel;
@@ -490,8 +376,7 @@ function applyRenderedEditAsSuggestion(): void {
   hideCommentPopover();
   hideCommentDisplay();
   if (shouldRerenderEditor) {
-    renderEditorOutput();
-    restoreRenderedSelectionOffset(selectionOffset);
+    rerenderEditorAtSelectionOffset(selectionOffsetAfterSuggestion(diff));
     statusPill.textContent = 'Suggestion added';
   } else {
     refreshDerivedPanels();
@@ -499,127 +384,21 @@ function applyRenderedEditAsSuggestion(): void {
   }
 }
 
-function renderedSelectionOffset(): number | null {
-  const selection = window.getSelection();
-  if (
-    selection === null ||
-    selection.rangeCount === 0 ||
-    !selection.isCollapsed ||
-    !selectionWithinRenderedReview(selection)
-  ) {
+function selectionOffsetAfterSuggestion(diff: {
+  readonly newValue: string;
+  readonly oldValue: string;
+  readonly start: number;
+}): number | null {
+  if (diff.oldValue === '' && diff.newValue === '') {
     return null;
   }
-
-  const range = selection.getRangeAt(0).cloneRange();
-  const prefixRange = document.createRange();
-  prefixRange.selectNodeContents(renderedReview);
-  prefixRange.setEnd(range.endContainer, range.endOffset);
-
-  const container = document.createElement('div');
-  container.append(prefixRange.cloneContents());
-  return renderedDomToReviewModel(container, editorModel).text.length;
-}
-
-function restoreRenderedSelectionOffset(offset: number | null): void {
-  if (offset === null) {
-    return;
+  if (diff.oldValue === '') {
+    return diff.start + diff.newValue.length;
   }
-
-  const position = findRenderedPositionAtOffset(renderedReview, offset);
-  const range = document.createRange();
-  range.setStart(position.node, position.offset);
-  range.collapse(true);
-
-  const selection = window.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-}
-
-function findRenderedPositionAtOffset(root: HTMLElement, offset: number): {node: Node; offset: number} {
-  let remaining = Math.max(0, offset);
-
-  const childPosition = (node: Node, child: Node, adjustment = 0): {node: Node; offset: number} => ({
-    node,
-    offset: Array.prototype.indexOf.call(node.childNodes, child) + adjustment,
-  });
-
-  const visitChildren = (node: Node): {node: Node; offset: number} | null => {
-    for (const child of Array.from(node.childNodes)) {
-      const position = visit(child);
-      if (position !== null) {
-        return position;
-      }
-    }
-    return null;
-  };
-
-  const visit = (node: Node): {node: Node; offset: number} | null => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      const length = node.nodeValue?.length ?? 0;
-      if (remaining <= length) {
-        return {node, offset: remaining};
-      }
-      remaining -= length;
-      return null;
-    }
-
-    if (!(node instanceof HTMLElement)) {
-      return null;
-    }
-
-    if (node.matches('.comment-anchor')) {
-      return null;
-    }
-
-    if (node.tagName === 'BR') {
-      if (remaining <= 1 && node.parentNode !== null) {
-        return childPosition(node.parentNode, node, 1);
-      }
-      remaining -= 1;
-      return null;
-    }
-
-    const markerLength = markdownMarkerLength(node);
-    if (markerLength > 0) {
-      if (remaining <= markerLength) {
-        return {node, offset: 0};
-      }
-      remaining -= markerLength;
-    }
-
-    const childMatch = visitChildren(node);
-    if (childMatch !== null) {
-      return childMatch;
-    }
-
-    if (markerLength > 0) {
-      if (remaining <= markerLength) {
-        return {node, offset: node.childNodes.length};
-      }
-      remaining -= markerLength;
-    }
-
-    if (node.tagName === 'DIV' || node.tagName === 'P') {
-      if (remaining <= 1) {
-        return {node, offset: node.childNodes.length};
-      }
-      remaining -= 1;
-    }
-
-    return null;
-  };
-
-  return visitChildren(root) ?? {node: root, offset: root.childNodes.length};
-}
-
-function markdownMarkerLength(node: HTMLElement): number {
-  if (node.tagName === 'STRONG' || node.tagName === 'B') {
-    return 2;
+  if (diff.newValue === '') {
+    return diff.start;
   }
-  if (node.tagName === 'CODE') {
-    return 1;
-  }
-  return 0;
+  return diff.start + diff.oldValue.length + diff.newValue.length;
 }
 
 function showCommentPopover(clientX: number, clientY: number): void {
@@ -627,7 +406,7 @@ function showCommentPopover(clientX: number, clientY: number): void {
   hideCommentDisplay();
   const selection = window.getSelection();
   pendingCommentRange = selectionWithinRenderedReview(selection)
-    ? selection!.getRangeAt(0).cloneRange()
+    ? reviewEditor.readSelectionRange()
     : null;
 
   const panel = renderedReview.closest<HTMLElement>('.editor-surface');
@@ -672,45 +451,29 @@ function hideCommentDisplay(): void {
 function addCommentFromSelection(): void {
   const comment = commentInput.value.trim() || 'Comment';
   const range = pendingCommentRange;
-  if (range === null || !renderedReview.contains(range.commonAncestorContainer)) {
+  if (range === null) {
     hideCommentPopover();
     return;
   }
 
-  if (range.collapsed) {
-    const commentElement = createCommentElement(comment);
-    range.insertNode(commentElement);
-  } else {
-    const selectedFragment = range.extractContents();
-    const mark = document.createElement('mark');
-    mark.dataset.commentId = nextAnnotationId(editorModel);
-    mark.dataset.commentValue = comment;
-    mark.dataset.testid = 'range-comment';
-    mark.tabIndex = 0;
-    mark.append(selectedFragment);
-    range.insertNode(mark);
-  }
+  const modelRange = clampRange(range, editorModel.text.length);
+  const commentRecord: ReviewComment = {
+    ...modelRange,
+    id: nextAnnotationId(editorModel),
+    value: comment,
+  };
 
   window.getSelection()?.removeAllRanges();
-  editorModel = renderedDomToReviewModel(renderedReview, editorModel);
+  editorModel = {
+    ...editorModel,
+    comments: [...editorModel.comments, commentRecord].sort(compareRanges),
+  };
   activeChangeIndex = null;
   editBaselineModel = cloneReviewModel(editorModel);
   hideCommentPopover();
   hideCommentDisplay();
   renderEditorOutput();
   statusPill.textContent = 'Comment added';
-}
-
-function createCommentElement(comment: string): HTMLElement {
-  const element = document.createElement('button');
-  element.type = 'button';
-  element.className = 'comment-anchor';
-  element.dataset.commentId = nextAnnotationId(editorModel);
-  element.dataset.commentValue = comment;
-  element.setAttribute('aria-label', 'Show comment');
-  element.contentEditable = 'false';
-  element.innerHTML = commentIconSvg();
-  return element;
 }
 
 function selectionWithinRenderedReview(selection: Selection | null): boolean {
@@ -738,117 +501,6 @@ function toggleToolbarPopover(popover: HTMLElement, trigger: HTMLButtonElement):
 function hideToolbarPopover(popover: HTMLElement, trigger: HTMLButtonElement): void {
   popover.hidden = true;
   trigger.setAttribute('aria-expanded', 'false');
-}
-
-function renderedDomToReviewModel(root: HTMLElement, baseline: ReviewModel): ReviewModel {
-  const suggestions = new Map<string, MutableSuggestion>();
-  const comments = new Map<string, ReviewComment>();
-  const highlights = new Map<string, ReviewHighlight>();
-  let text = '';
-
-  for (const suggestion of baseline.suggestions) {
-    suggestions.set(suggestion.id, {
-      id: suggestion.id,
-      type: suggestion.type,
-    });
-  }
-
-  const appendText = (value: string): ReviewRange => {
-    const start = text.length;
-    text += value;
-    return {end: text.length, start};
-  };
-
-  const appendChildren = (node: Node): void => {
-    for (const child of Array.from(node.childNodes)) {
-      appendNode(child);
-    }
-  };
-
-  const appendNode = (node: Node): void => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      appendText(node.nodeValue ?? '');
-      return;
-    }
-
-    if (!(node instanceof HTMLElement)) {
-      return;
-    }
-
-    if (node.matches('.comment-anchor')) {
-      const id = node.dataset.commentId ?? nextAnnotationId({comments: Array.from(comments.values())});
-      comments.set(id, {
-        end: text.length,
-        id,
-        start: text.length,
-        value: node.dataset.commentValue ?? '',
-      });
-      return;
-    }
-
-    if (node.tagName === 'BR') {
-      appendText('\n');
-      return;
-    }
-
-    const start = text.length;
-    if (node.tagName === 'STRONG' || node.tagName === 'B') {
-      appendText('**');
-      appendChildren(node);
-      appendText('**');
-    } else if (node.tagName === 'CODE') {
-      appendText('`');
-      appendChildren(node);
-      appendText('`');
-    } else {
-      appendChildren(node);
-      if (node.tagName === 'DIV' || node.tagName === 'P') {
-        appendText('\n');
-      }
-    }
-    const end = text.length;
-    if (end === start) {
-      return;
-    }
-
-    const suggestionId = node.dataset.suggestionId;
-    const suggestionPart = node.dataset.suggestionPart;
-    if (suggestionId !== undefined && (suggestionPart === 'old' || suggestionPart === 'new')) {
-      const baselineSuggestion = baseline.suggestions.find(suggestion => suggestion.id === suggestionId);
-      const suggestion = suggestions.get(suggestionId) ?? {
-        id: suggestionId,
-        type: baselineSuggestion?.type ?? (suggestionPart === 'new' ? 'addition' : 'deletion'),
-      };
-      mergeSuggestionRange(suggestion, suggestionPart, {start, end});
-      suggestions.set(suggestionId, suggestion);
-    }
-
-    const commentId = node.dataset.commentId;
-    if (commentId !== undefined) {
-      comments.set(commentId, {
-        end,
-        id: commentId,
-        start,
-        value: node.dataset.commentValue ?? '',
-      });
-    }
-
-    const highlightId = node.dataset.highlightId;
-    if (highlightId !== undefined) {
-      highlights.set(highlightId, {end, id: highlightId, start});
-    }
-  };
-
-  appendChildren(root);
-  return {
-    comments: Array.from(comments.values()).sort(compareRanges),
-    highlights: Array.from(highlights.values()).sort(compareRanges),
-    suggestions: Array.from(suggestions.values())
-      .filter(hasSuggestionRange)
-      .map(toReviewSuggestion)
-      .sort((left, right) => suggestionModelStart(left) - suggestionModelStart(right)),
-    text,
-  };
 }
 
 function reconcileRenderedEdit(baseline: ReviewModel, domModel: ReviewModel): ReviewModel {
@@ -963,52 +615,14 @@ function nextAnnotationId(model: {readonly comments: readonly ReviewComment[]}):
   return `c-local-${model.comments.length + 1}-${Date.now()}`;
 }
 
-type MutableSuggestion = {
-  id: string;
-  newRange?: ReviewRange;
-  oldRange?: ReviewRange;
-  type: ReviewSuggestion['type'];
-};
-
-function mergeSuggestionRange(
-  suggestion: MutableSuggestion,
-  part: 'new' | 'old',
-  range: ReviewRange,
-): void {
-  const key = part === 'new' ? 'newRange' : 'oldRange';
-  const current = suggestion[key];
-  suggestion[key] = current === undefined
-    ? range
-    : {end: Math.max(current.end, range.end), start: Math.min(current.start, range.start)};
-}
-
-function hasSuggestionRange(suggestion: MutableSuggestion): boolean {
-  return suggestion.oldRange !== undefined || suggestion.newRange !== undefined;
-}
-
-function toReviewSuggestion(suggestion: MutableSuggestion): ReviewSuggestion {
-  const next: ReviewSuggestion = {
-    id: suggestion.id,
-    type: suggestion.type,
-  };
-  if (suggestion.oldRange !== undefined && suggestion.newRange !== undefined) {
-    return {...next, newRange: suggestion.newRange, oldRange: suggestion.oldRange};
-  }
-  if (suggestion.oldRange !== undefined) {
-    return {...next, oldRange: suggestion.oldRange};
-  }
-  return suggestion.newRange === undefined ? next : {...next, newRange: suggestion.newRange};
-}
-
 function compareRanges(left: ReviewRange, right: ReviewRange): number {
   return left.start - right.start || left.end - right.end;
 }
 
-function suggestionModelStart(suggestion: ReviewSuggestion): number {
-  return Math.min(
-    suggestion.oldRange?.start ?? Number.POSITIVE_INFINITY,
-    suggestion.newRange?.start ?? Number.POSITIVE_INFINITY,
-  );
+function clampRange(range: ReviewRange, maxLength: number): ReviewRange {
+  const start = Math.max(0, Math.min(range.start, maxLength));
+  const end = Math.max(0, Math.min(range.end, maxLength));
+  return start <= end ? {end, start} : {end: start, start: end};
 }
 
 function cloneReviewModel(model: ReviewModel): ReviewModel {
