@@ -225,29 +225,44 @@ test('rejects one formatted-boundary substitution as a single change', async ({p
   );
 });
 
-test('shows inline accept/reject controls from the rendered suggestion', async ({page}) => {
+test('hovering a rendered suggestion shows inline accept/reject controls', async ({page}) => {
   await page.goto('/');
 
-  await page.locator('.rendered-review [data-change-index="0"]').first().click();
+  const suggestion = page.locator('.rendered-review [data-change-index="0"]').first();
+  await suggestion.click();
+  await expect(page.getByTestId('inline-review-actions')).toBeHidden();
+
+  await suggestion.hover();
   await expect(page.getByTestId('inline-review-actions')).toBeVisible();
   await expect(page.getByTestId('suggestion-card').first()).toHaveClass(/active/);
 
+  await page.mouse.move(4, 4);
+  await expect(page.getByTestId('inline-review-actions')).toBeHidden();
+
+  await suggestion.hover();
+  await expect(page.getByTestId('inline-review-actions')).toBeVisible();
   await page.getByRole('button', {name: 'Reject suggestion'}).click();
   await expect(page.getByTestId('critic-output')).toHaveValue(
     `this is **a great idea** for us.\n\n{==Please ship==}{>>${sampleRangeComment}<<} the {~~first draft.~>polished draft.~~}{>>${samplePointComment}<<}`,
   );
 });
 
-test('clicking range comments and point comment icons opens comment overlays', async ({page}) => {
+test('hovering range comments and point comment icons opens comment overlays', async ({page}) => {
   await page.goto('/');
 
   await page.getByTestId('range-comment').click();
+  await expect(page.getByTestId('comment-display')).toBeHidden();
+
+  await page.getByTestId('range-comment').hover();
   await expect(page.getByTestId('comment-display')).toBeVisible();
   await expect(page.getByTestId('comment-display')).toHaveText(sampleRangeComment);
 
-  await page.getByTestId('comment-anchor').first().click();
+  await page.getByTestId('comment-anchor').first().hover();
   await expect(page.getByTestId('comment-display')).toBeVisible();
   await expect(page.getByTestId('comment-display')).toHaveText(samplePointComment);
+
+  await page.mouse.move(4, 4);
+  await expect(page.getByTestId('comment-display')).toBeHidden();
 });
 
 test('adds a range comment from selected text with the context menu', async ({page}) => {

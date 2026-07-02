@@ -26,6 +26,8 @@ const sampleBefore = 'this is **a great idea** for us.\n\nPlease ship the first 
 const sampleAfter = 'this **great** for us\n\nPlease ship the polished draft.';
 const sampleRangeComment = 'Range comment: tighten the action wording';
 const samplePointComment = 'Point comment: confirm the delivery owner';
+const hoverRevealDelayMs = 450;
+const hoverDismissDelayMs = 280;
 
 const beforeInput = getElement<HTMLTextAreaElement>('before-input');
 const afterInput = getElement<HTMLTextAreaElement>('after-input');
@@ -53,6 +55,10 @@ let activeChangeIndex: number | null = null;
 let editorModel: ReviewModel = emptyReviewModel();
 let editBaselineModel: ReviewModel = emptyReviewModel();
 let longTouchTimer = 0;
+let hoverRevealTimer = 0;
+let hoverDismissTimer = 0;
+let pendingHoverTarget: HTMLElement | null = null;
+let activeHoverTarget: HTMLElement | null = null;
 let pendingCommentRange: ReviewRange | null = null;
 const reviewEditor: ReviewLexicalAdapter = createReviewLexicalAdapter(renderedReview, {
   onChange: applyLexicalEditAsSuggestion,
@@ -115,26 +121,12 @@ changeList.addEventListener('focusin', event => {
     setActiveChangeIndex(Number(card.dataset.suggestionIndex));
   }
 });
-renderedReview.addEventListener('click', event => {
-  const commentAnchor = (event.target as HTMLElement).closest<HTMLElement>(
-    '[data-comment-value]',
-  );
-  if (commentAnchor !== null) {
-    showCommentDisplay(commentAnchor);
-    return;
-  }
-
-  const changeElement = (event.target as HTMLElement).closest<HTMLElement>(
-    '[data-change-index]',
-  );
-  if (changeElement === null) {
-    hideInlineActions();
-    setActiveChangeIndex(null);
-    hideCommentDisplay();
-    return;
-  }
-  showInlineActions(changeElement);
-});
+document.addEventListener('pointermove', handleReviewHoverMove);
+renderedReview.addEventListener('pointerleave', scheduleHoverDismiss);
+inlineReviewActions.addEventListener('pointerenter', cancelHoverDismiss);
+inlineReviewActions.addEventListener('pointerleave', scheduleHoverDismiss);
+commentDisplay.addEventListener('pointerenter', cancelHoverDismiss);
+commentDisplay.addEventListener('pointerleave', scheduleHoverDismiss);
 renderedReview.addEventListener('keyup', () => {
   const selection = window.getSelection();
   const node = selection?.anchorNode;
@@ -312,6 +304,96 @@ function describeChange(change: ReviewChange): string {
       return `<q>${markdownInlineToHtml(change.oldValue)}</q> changed to <q>${markdownInlineToHtml(change.newValue)}</q>`;
   }
   return '';
+}
+
+function handleReviewHoverMove(event: PointerEvent): void {
+  if (event.pointerType !== 'mouse') {
+    return;
+  }
+
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    scheduleHoverDismiss();
+    return;
+  }
+
+  if (target.closest('#inline-review-actions, #comment-display') !== null) {
+    cancelHoverDismiss();
+    return;
+  }
+
+  if (!renderedReview.contains(target)) {
+    scheduleHoverDismiss();
+    return;
+  }
+
+  const hoverTarget = reviewHoverTarget(target);
+  if (hoverTarget === null) {
+    scheduleHoverDismiss();
+    return;
+  }
+
+  scheduleHoverReveal(hoverTarget);
+}
+
+function reviewHoverTarget(target: Element): HTMLElement | null {
+  const changeTarget = target.closest<HTMLElement>('[data-change-index]');
+  if (changeTarget !== null && renderedReview.contains(changeTarget)) {
+    return changeTarget;
+  }
+
+  const commentTarget = target.closest<HTMLElement>('[data-comment-value]');
+  if (commentTarget !== null && renderedReview.contains(commentTarget)) {
+    return commentTarget;
+  }
+
+  return null;
+}
+
+function scheduleHoverReveal(target: HTMLElement): void {
+  cancelHoverDismiss();
+  if (activeHoverTarget === target) {
+    return;
+  }
+  if (pendingHoverTarget === target) {
+    return;
+  }
+
+  window.clearTimeout(hoverRevealTimer);
+  pendingHoverTarget = target;
+  hoverRevealTimer = window.setTimeout(() => {
+    const nextTarget = pendingHoverTarget;
+    pendingHoverTarget = null;
+    if (nextTarget !== null && nextTarget.isConnected) {
+      showHoverOverlay(nextTarget);
+    }
+  }, hoverRevealDelayMs);
+}
+
+function showHoverOverlay(target: HTMLElement): void {
+  activeHoverTarget = target;
+  if (target.dataset.changeIndex !== undefined) {
+    showInlineActions(target);
+    return;
+  }
+
+  showCommentDisplay(target);
+}
+
+function scheduleHoverDismiss(): void {
+  window.clearTimeout(hoverRevealTimer);
+  pendingHoverTarget = null;
+  window.clearTimeout(hoverDismissTimer);
+  hoverDismissTimer = window.setTimeout(() => {
+    activeHoverTarget = null;
+    hideInlineActions();
+    hideCommentDisplay();
+    setActiveChangeIndex(null);
+  }, hoverDismissDelayMs);
+}
+
+function cancelHoverDismiss(): void {
+  window.clearTimeout(hoverDismissTimer);
 }
 
 function showInlineActions(changeElement: HTMLElement): void {

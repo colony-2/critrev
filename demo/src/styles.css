@@ -383,7 +383,7 @@ mark[data-comment-value] {
   padding: 10px;
   color: #202124;
   font-size: 13px;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .comment-display[hidden] {
