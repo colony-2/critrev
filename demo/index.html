@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>review2 CriticMarkup demo</title>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <main class="app">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">review2</p>
+          <h1>CriticMarkup Pipeline</h1>
+        </div>
+        <div class="status-pill" id="status-pill">Ready</div>
+      </header>
+
+      <section class="stage-grid" aria-label="Pipeline stages">
+        <article class="panel input-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="stage-label">Stage 1</p>
+              <h2>Before / After</h2>
+            </div>
+            <button id="reset-sample" type="button">Reset</button>
+          </div>
+          <label class="field">
+            <span>before.md</span>
+            <textarea id="before-input" spellcheck="false"></textarea>
+          </label>
+          <label class="field">
+            <span>after.md</span>
+            <textarea id="after-input" spellcheck="false"></textarea>
+          </label>
+        </article>
+
+        <article class="panel critic-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="stage-label">Stage 2</p>
+              <h2>review.critic.md</h2>
+            </div>
+            <button id="sync-review" type="button">Sync</button>
+          </div>
+          <label class="field">
+            <span>Editor boundary</span>
+            <textarea id="critic-input" spellcheck="false"></textarea>
+          </label>
+          <div class="metrics" id="metrics" aria-label="CriticMarkup counts"></div>
+        </article>
+
+        <article class="panel preview-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="stage-label">Stage 2</p>
+              <h2>Rendered Review</h2>
+            </div>
+          </div>
+          <div class="rendered-review" id="rendered-review"></div>
+        </article>
+
+        <article class="panel output-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="stage-label">Stage 3</p>
+              <h2>Finalizer</h2>
+            </div>
+          </div>
+          <label class="field">
+            <span>final.md</span>
+            <textarea id="final-output" readonly spellcheck="false"></textarea>
+          </label>
+          <label class="field">
+            <span>final-clean.md</span>
+            <textarea id="clean-output" readonly spellcheck="false"></textarea>
+          </label>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

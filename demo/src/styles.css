@@ -1,0 +1,259 @@
+:root {
+  color-scheme: light;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  line-height: 1.5;
+  color: #202124;
+  background: #f5f7f8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+.app {
+  min-height: 100vh;
+  padding: 16px;
+}
+
+.app-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 1440px;
+  margin: 0 auto 16px;
+}
+
+.eyebrow,
+.stage-label {
+  margin: 0;
+  color: #5f6368;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1,
+h2 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+h1 {
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+h2 {
+  font-size: 17px;
+}
+
+.status-pill {
+  min-width: 88px;
+  border: 1px solid #c7d2d9;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: #3c4043;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.stage-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.panel {
+  min-width: 0;
+  border: 1px solid #d9dee2;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  margin-bottom: 10px;
+}
+
+button {
+  min-height: 36px;
+  border: 1px solid #b8c1c8;
+  border-radius: 7px;
+  padding: 0 12px;
+  background: #ffffff;
+  color: #202124;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #f1f5f7;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.field span {
+  color: #5f6368;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+textarea {
+  width: 100%;
+  min-height: 148px;
+  resize: vertical;
+  border: 1px solid #cbd3d8;
+  border-radius: 7px;
+  padding: 10px;
+  background: #fbfcfd;
+  color: #202124;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+textarea:focus {
+  outline: 2px solid #2f6fed;
+  outline-offset: 1px;
+}
+
+.critic-panel textarea {
+  min-height: 224px;
+}
+
+.rendered-review {
+  min-height: 224px;
+  border: 1px solid #cbd3d8;
+  border-radius: 7px;
+  padding: 14px;
+  background: #fbfcfd;
+  white-space: pre-wrap;
+}
+
+ins,
+del,
+mark,
+.comment,
+.substitution {
+  border-radius: 5px;
+  padding: 1px 3px;
+}
+
+ins {
+  background: #dcf7df;
+  color: #155724;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+
+del {
+  background: #fde2e1;
+  color: #8a1c16;
+  text-decoration-thickness: 2px;
+}
+
+mark {
+  background: #fff2a8;
+  color: inherit;
+}
+
+.substitution {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  background: #eef3f6;
+}
+
+.arrow {
+  color: #5f6368;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.comment {
+  display: inline-block;
+  border: 1px solid #e2c15c;
+  background: #fff8da;
+  color: #4d3b00;
+  font-size: 13px;
+}
+
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.metrics span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #d4dce1;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #3c4043;
+  font-size: 12px;
+}
+
+.metrics strong {
+  color: #202124;
+}
+
+.empty {
+  margin: 0;
+  color: #5f6368;
+}
+
+@media (min-width: 900px) {
+  .app {
+    padding: 24px;
+  }
+
+  .stage-grid {
+    grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.05fr);
+  }
+
+  .preview-panel,
+  .output-panel {
+    min-height: 360px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .stage-grid {
+    grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1fr) minmax(320px, 1fr) minmax(300px, 0.95fr);
+  }
+
+  textarea,
+  .rendered-review {
+    min-height: 420px;
+  }
+}
