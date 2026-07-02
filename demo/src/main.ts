@@ -17,7 +17,10 @@ import {
 } from '../../src/index';
 import {
   createReviewLexicalAdapter,
+  type ReviewContentMode,
   type ReviewLexicalAdapter,
+  type ReviewMarkdownFormatAction,
+  type ReviewMarkdownFormatCommand,
 } from './review-lexical';
 
 type ViewMode = 'accept' | 'reject' | 'revisions';
@@ -53,7 +56,11 @@ const viewModeButtons = Array.from(
 const formatButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-format-prefix]'),
 );
+const contentModeButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('[data-content-mode]'),
+);
 let activeViewMode: ViewMode = 'revisions';
+let activeContentMode: ReviewContentMode = 'wysiwyg';
 let activeChangeIndex: number | null = null;
 let editorModel: ReviewModel = emptyReviewModel();
 let editBaselineModel: ReviewModel = emptyReviewModel();
@@ -108,6 +115,13 @@ for (const button of formatButtons) {
   });
   button.addEventListener('click', () => {
     applyMarkdownFormat(button);
+  });
+}
+for (const button of contentModeButtons) {
+  button.addEventListener('click', () => {
+    activeContentMode = button.dataset.contentMode as ReviewContentMode;
+    syncContentModeButtons();
+    renderEditorOutput();
   });
 }
 changeList.addEventListener('click', event => {
@@ -227,9 +241,11 @@ function initializeEditor(criticMarkup: string): void {
   activeChangeIndex = null;
   editBaselineModel = cloneReviewModel(editorModel);
   activeViewMode = 'revisions';
+  activeContentMode = 'wysiwyg';
   for (const button of viewModeButtons) {
     button.classList.toggle('active', button.dataset.viewMode === activeViewMode);
   }
+  syncContentModeButtons();
   renderEditorOutput();
 }
 
@@ -247,10 +263,16 @@ function updateGeneratedOnly(): void {
 
 function renderEditorOutput(): void {
   const visibleModel = modelForView(editorModel, activeViewMode);
-  reviewEditor.setModel(visibleModel);
+  reviewEditor.setModel(visibleModel, activeContentMode);
   reviewEditor.setEditable(activeViewMode === 'revisions');
   syncFormatToolbarState();
   refreshDerivedPanels();
+}
+
+function syncContentModeButtons(): void {
+  for (const button of contentModeButtons) {
+    button.classList.toggle('active', button.dataset.contentMode === activeContentMode);
+  }
 }
 
 function syncFormatToolbarState(): void {
@@ -318,14 +340,28 @@ function applyMarkdownFormat(button: HTMLButtonElement): void {
     return;
   }
 
-  const prefix = button.dataset.formatPrefix ?? '';
-  const suffix = button.dataset.formatSuffix ?? prefix;
+  const prefix = decodeToolbarValue(button.dataset.formatPrefix ?? '');
+  const suffix = decodeToolbarValue(button.dataset.formatSuffix ?? prefix);
   if (prefix.length === 0 && suffix.length === 0) {
     return;
   }
 
-  reviewEditor.applyMarkdownFormat(prefix, suffix);
+  const placeholder = button.dataset.formatPlaceholder;
+  const richFormat = button.dataset.richFormat as ReviewMarkdownFormatCommand['richFormat'];
+  const command: ReviewMarkdownFormatCommand = {
+    action: (button.dataset.formatAction ?? 'inline') as ReviewMarkdownFormatAction,
+    mode: activeContentMode,
+    prefix,
+    suffix,
+    ...(placeholder === undefined ? {} : {placeholder}),
+    ...(richFormat === undefined ? {} : {richFormat}),
+  };
+  reviewEditor.applyMarkdownFormat(command);
   statusPill.textContent = 'Formatting suggested';
+}
+
+function decodeToolbarValue(value: string): string {
+  return value.replaceAll('\\n', '\n');
 }
 
 function describeChange(change: ReviewChange): string {

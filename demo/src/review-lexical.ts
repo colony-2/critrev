@@ -13,6 +13,7 @@ import {
   $isTextNode,
   createEditor,
   ElementNode,
+  TEXT_TYPE_TO_FORMAT,
   TextNode,
   mergeRegister,
   type EditorConfig,
@@ -24,6 +25,7 @@ import {
   type SerializedElementNode,
   type SerializedTextNode,
   type Spread,
+  type TextFormatType,
 } from 'lexical';
 
 import {
@@ -35,19 +37,32 @@ import {
 } from '../../src/index';
 
 export type ReviewLexicalAdapter = {
+  applyMarkdownFormat(command: ReviewMarkdownFormatCommand): void;
   dispose(): void;
-  applyMarkdownFormat(prefix: string, suffix: string): void;
   focus(): void;
   getModel(): ReviewModel;
   getSelectionOffset(): number | null;
   readSelectionRange(): ReviewRange | null;
   restoreSelectionOffset(offset: number | null): void;
   setEditable(editable: boolean): void;
-  setModel(model: ReviewModel): void;
+  setModel(model: ReviewModel, mode: ReviewContentMode): void;
 };
 
 export type ReviewLexicalAdapterOptions = {
   onChange(model: ReviewModel, selectionOffset: number | null): void;
+};
+
+export type ReviewContentMode = 'source' | 'wysiwyg';
+
+export type ReviewMarkdownFormatAction = 'block' | 'inline' | 'line';
+
+export type ReviewMarkdownFormatCommand = {
+  readonly action: ReviewMarkdownFormatAction;
+  readonly mode: ReviewContentMode;
+  readonly placeholder?: string;
+  readonly prefix: string;
+  readonly richFormat?: TextFormatType;
+  readonly suffix: string;
 };
 
 type ReviewLexicalSnapshot = {
@@ -252,6 +267,7 @@ export function createReviewLexicalAdapter(
   options: ReviewLexicalAdapterOptions,
 ): ReviewLexicalAdapter {
   let currentModel = emptyReviewModel();
+  let currentMode: ReviewContentMode = 'wysiwyg';
   let applyingModel = false;
 
   const editor = createEditor({
@@ -277,17 +293,17 @@ export function createReviewLexicalAdapter(
         return;
       }
 
-      const snapshot = editorStateToReviewSnapshot(editorState);
+      const snapshot = editorStateToReviewSnapshot(editorState, currentMode);
       currentModel = snapshot.model;
       options.onChange(cloneReviewModel(currentModel), snapshot.selectionOffset);
     }),
   );
 
   return {
-    applyMarkdownFormat(prefix: string, suffix: string) {
+    applyMarkdownFormat(command: ReviewMarkdownFormatCommand) {
       editor.update(
         () => {
-          applyMarkdownFormatToSelection(prefix, suffix);
+          applyMarkdownFormatToSelection(command);
         },
         {discrete: true},
       );
@@ -326,12 +342,13 @@ export function createReviewLexicalAdapter(
       rootElement.contentEditable = String(editable);
       rootElement.setAttribute('aria-readonly', String(!editable));
     },
-    setModel(model: ReviewModel) {
+    setModel(model: ReviewModel, mode: ReviewContentMode) {
       applyingModel = true;
       currentModel = cloneReviewModel(model);
+      currentMode = mode;
       editor.update(
         () => {
-          writeReviewModelToLexical(model);
+          writeReviewModelToLexical(model, mode);
         },
         {discrete: true},
       );
@@ -340,7 +357,7 @@ export function createReviewLexicalAdapter(
   };
 }
 
-function writeReviewModelToLexical(model: ReviewModel): void {
+function writeReviewModelToLexical(model: ReviewModel, mode: ReviewContentMode): void {
   const root = $getRoot();
   root.clear();
 
@@ -361,7 +378,12 @@ function writeReviewModelToLexical(model: ReviewModel): void {
       continue;
     }
 
-    appendTextWithLineBreaks(paragraph, model.text.slice(start, end), metaForRange(model, {start, end}));
+    appendTextWithLineBreaks(
+      paragraph,
+      model.text.slice(start, end),
+      metaForRange(model, {start, end}),
+      mode,
+    );
   }
 
   root.append(paragraph);
@@ -371,12 +393,13 @@ function appendTextWithLineBreaks(
   paragraph: ReturnType<typeof $createParagraphNode>,
   value: string,
   meta: ReviewTextMeta | null,
+  mode: ReviewContentMode,
 ): void {
   const lines = value.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? '';
     if (line.length > 0) {
-      paragraph.append(meta === null ? $createTextNode(line) : $createReviewTextNode(line, meta));
+      appendTextLine(paragraph, line, meta, mode);
     }
     if (index < lines.length - 1) {
       paragraph.append($createLineBreakNode());
@@ -384,7 +407,113 @@ function appendTextWithLineBreaks(
   }
 }
 
-function editorStateToReviewSnapshot(editorState: EditorState): ReviewLexicalSnapshot {
+function appendTextLine(
+  paragraph: ReturnType<typeof $createParagraphNode>,
+  line: string,
+  meta: ReviewTextMeta | null,
+  mode: ReviewContentMode,
+): void {
+  if (mode === 'source') {
+    paragraph.append(meta === null ? $createTextNode(line) : $createReviewTextNode(line, meta));
+    return;
+  }
+
+  for (const segment of parseMarkdownInline(line)) {
+    if (segment.text.length === 0) {
+      continue;
+    }
+
+    const node = meta === null
+      ? $createTextNode(segment.text)
+      : $createReviewTextNode(segment.text, meta);
+    node.setFormat(segment.format);
+    paragraph.append(node);
+  }
+}
+
+type MarkdownInlineSegment = {
+  readonly format: number;
+  readonly text: string;
+};
+
+type MarkdownDelimiter = {
+  readonly close: string;
+  readonly format: number;
+  readonly open: string;
+};
+
+const markdownInlineDelimiters: readonly MarkdownDelimiter[] = [
+  {close: '`', format: markdownFormatFlag('code'), open: '`'},
+  {close: '**', format: markdownFormatFlag('bold'), open: '**'},
+  {close: '~~', format: markdownFormatFlag('strikethrough'), open: '~~'},
+  {close: '*', format: markdownFormatFlag('italic'), open: '*'},
+];
+
+function markdownFormatFlag(format: TextFormatType): number {
+  const flag = TEXT_TYPE_TO_FORMAT[format];
+  if (flag === undefined) {
+    throw new Error(`Unsupported text format: ${format}`);
+  }
+  return flag;
+}
+
+function parseMarkdownInline(value: string, inheritedFormat = 0): MarkdownInlineSegment[] {
+  const segments: MarkdownInlineSegment[] = [];
+  let cursor = 0;
+
+  while (cursor < value.length) {
+    const match = nextMarkdownDelimiter(value, cursor);
+    if (match === null) {
+      segments.push({format: inheritedFormat, text: value.slice(cursor)});
+      break;
+    }
+
+    if (match.start > cursor) {
+      segments.push({format: inheritedFormat, text: value.slice(cursor, match.start)});
+    }
+
+    const innerStart = match.start + match.delimiter.open.length;
+    const innerEnd = match.end;
+    const innerText = value.slice(innerStart, innerEnd);
+    const nextFormat = inheritedFormat | match.delimiter.format;
+    if (match.delimiter.format === TEXT_TYPE_TO_FORMAT.code) {
+      segments.push({format: nextFormat, text: innerText});
+    } else {
+      segments.push(...parseMarkdownInline(innerText, nextFormat));
+    }
+    cursor = match.end + match.delimiter.close.length;
+  }
+
+  return segments.filter(segment => segment.text.length > 0);
+}
+
+function nextMarkdownDelimiter(
+  value: string,
+  startOffset: number,
+): {delimiter: MarkdownDelimiter; end: number; start: number} | null {
+  let best: {delimiter: MarkdownDelimiter; end: number; start: number} | null = null;
+  for (const delimiter of markdownInlineDelimiters) {
+    const start = value.indexOf(delimiter.open, startOffset);
+    if (start === -1) {
+      continue;
+    }
+
+    const end = value.indexOf(delimiter.close, start + delimiter.open.length);
+    if (end === -1) {
+      continue;
+    }
+
+    if (best === null || start < best.start) {
+      best = {delimiter, end, start};
+    }
+  }
+  return best;
+}
+
+function editorStateToReviewSnapshot(
+  editorState: EditorState,
+  mode: ReviewContentMode,
+): ReviewLexicalSnapshot {
   return editorState.read(() => {
     const suggestions = new Map<string, MutableSuggestion>();
     const comments = new Map<string, ReviewComment>();
@@ -416,12 +545,17 @@ function editorStateToReviewSnapshot(editorState: EditorState): ReviewLexicalSna
       }
 
       if ($isReviewTextNode(node)) {
-        const range = appendText(node.getTextContent());
+        const range = appendText(serializeLexicalTextNode(node, mode));
         applyReviewMetaToModel(node.getReviewMeta(), range, suggestions, comments, highlights);
         return;
       }
 
-      if ($isTextNode(node) || $isLineBreakNode(node)) {
+      if ($isTextNode(node)) {
+        appendText(serializeLexicalTextNode(node, mode));
+        return;
+      }
+
+      if ($isLineBreakNode(node)) {
         appendText(node.getTextContent());
         return;
       }
@@ -473,6 +607,29 @@ function collapsedSelectionPoint(): {key: string; offset: number} | null {
   };
 }
 
+function serializeLexicalTextNode(node: TextNode, mode: ReviewContentMode): string {
+  const text = node.getTextContent();
+  if (mode === 'source' || text.length === 0) {
+    return text;
+  }
+
+  if (node.hasFormat('code')) {
+    return `\`${text}\``;
+  }
+
+  let output = text;
+  if (node.hasFormat('bold')) {
+    output = `**${output}**`;
+  }
+  if (node.hasFormat('italic')) {
+    output = `*${output}*`;
+  }
+  if (node.hasFormat('strikethrough')) {
+    output = `~~${output}~~`;
+  }
+  return output;
+}
+
 function offsetInsideSelectionNode(node: LexicalNode, offset: number): number {
   if ($isTextNode(node)) {
     return Math.min(offset, node.getTextContent().length);
@@ -492,25 +649,53 @@ function offsetInsideSelectionNode(node: LexicalNode, offset: number): number {
     .reduce((total, child) => total + child.getTextContent().length, 0);
 }
 
-function applyMarkdownFormatToSelection(prefix: string, suffix: string): void {
+function applyMarkdownFormatToSelection(command: ReviewMarkdownFormatCommand): void {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) {
     return;
   }
 
+  if (
+    command.mode === 'wysiwyg' &&
+    command.action === 'inline' &&
+    command.richFormat !== undefined
+  ) {
+    selection.formatText(command.richFormat);
+    return;
+  }
+
   const range = selectionRangeOffset(selection);
-  const selectedText = selection.getTextContent();
-  const formattedText = `${prefix}${selectedText}${suffix}`;
+  const rawSelectedText = selection.getTextContent();
+  const selectedText = rawSelectedText || command.placeholder || '';
+  const formattedText = markdownFormattedText(command, selectedText);
   selection.insertText(formattedText);
 
   if (range === null) {
     return;
   }
 
-  const nextOffset = selectedText.length === 0
-    ? range.start + prefix.length
+  const nextOffset = rawSelectedText.length === 0
+    ? range.start + command.prefix.length
     : range.start + formattedText.length;
   selectLexicalOffset(nextOffset);
+}
+
+function markdownFormattedText(command: ReviewMarkdownFormatCommand, selectedText: string): string {
+  if (command.action === 'line') {
+    const lines = selectedText.split('\n');
+    return lines.map((line, index) => {
+      const prefix = command.prefix.includes('{n}')
+        ? command.prefix.replace('{n}', String(index + 1))
+        : command.prefix;
+      return `${prefix}${line}`;
+    }).join('\n');
+  }
+
+  if (command.action === 'block') {
+    return `${command.prefix}${selectedText}${command.suffix}`;
+  }
+
+  return `${command.prefix}${selectedText}${command.suffix}`;
 }
 
 function selectionRangeOffset(selection: ReturnType<typeof $getSelection>): ReviewRange | null {

@@ -23,8 +23,10 @@ test('shows each CriticMarkup pipeline stage', async ({page}) => {
 
   await expect(page.getByTestId('rendered-review')).toHaveAttribute('data-editor-engine', 'lexical');
   await expect(page.getByTestId('rendered-review')).toHaveAttribute('data-lexical-editor', 'true');
-  await expect(page.getByTestId('rendered-review')).toContainText('is **a great idea** for us.');
-  await expect(page.getByTestId('rendered-review')).toContainText('**great** for us');
+  await expect(page.getByRole('button', {name: 'WYSIWYG'})).toHaveClass(/active/);
+  await expect(page.getByTestId('rendered-review')).toContainText('is a great idea for us.');
+  await expect(page.getByTestId('rendered-review')).toContainText('great for us');
+  await expect(page.getByTestId('rendered-review')).not.toContainText('**great**');
   await expect(page.getByTestId('rendered-review')).not.toContainText(sampleRangeComment);
   await expect(page.getByTestId('rendered-review')).not.toContainText(samplePointComment);
   await expect(page.getByTestId('comment-anchor')).toHaveCount(1);
@@ -99,21 +101,39 @@ test('toggles between revisions, reject-all preview, and accept-all preview', as
   const renderedReview = page.getByTestId('rendered-review');
   await page.getByTestId('view-mode-toggle').click();
   await page.getByRole('button', {name: 'Preview reject all'}).click();
-  await expect(renderedReview).toContainText('this is **a great idea** for us.');
+  await expect(renderedReview).toContainText('this is a great idea for us.');
   await expect(renderedReview).toContainText('the first draft.');
   await expect(renderedReview).toHaveAttribute('contenteditable', 'false');
 
   await page.getByTestId('view-mode-toggle').click();
   await page.getByRole('button', {name: 'Preview accept all'}).click();
-  await expect(renderedReview).toContainText('this **great** for us');
+  await expect(renderedReview).toContainText('this great for us');
   await expect(renderedReview).toContainText('the polished draft.');
   await expect(renderedReview).toHaveAttribute('contenteditable', 'false');
 
   await page.getByTestId('view-mode-toggle').click();
   await page.getByRole('button', {name: 'Show revisions'}).click();
   await expect(renderedReview).toHaveAttribute('contenteditable', 'true');
-  await expect(renderedReview.locator('ins')).toHaveCount(2);
-  await expect(renderedReview.locator('del')).toHaveCount(2);
+  await expect(renderedReview.locator('[data-change-index="0"]')).not.toHaveCount(0);
+  await expect(renderedReview.locator('[data-change-index="1"]')).not.toHaveCount(0);
+});
+
+test('switches rendered content between WYSIWYG and source text modes', async ({page}) => {
+  await page.goto('/');
+
+  const renderedReview = page.getByTestId('rendered-review');
+  await expect(renderedReview).toContainText('great for us');
+  await expect(renderedReview).not.toContainText('**great**');
+
+  await page.getByRole('button', {name: 'Text'}).click();
+  await expect(page.getByRole('button', {name: 'Text'})).toHaveClass(/active/);
+  await expect(renderedReview).toContainText('**great** for us');
+  await expect(renderedReview.locator('ins').first()).toContainText('**great** for us');
+
+  await page.getByRole('button', {name: 'WYSIWYG'}).click();
+  await expect(page.getByRole('button', {name: 'WYSIWYG'})).toHaveClass(/active/);
+  await expect(renderedReview).toContainText('great for us');
+  await expect(renderedReview).not.toContainText('**great**');
 });
 
 test('rendered review edits become suggestions instead of hard changes', async ({page}) => {
@@ -155,7 +175,26 @@ test('format toolbar suggests markdown formatting for selected text', async ({pa
   await page.getByTestId('critic-input').fill('Plain text');
   await page.getByRole('button', {name: 'Load'}).click();
 
-  await expect(page.getByTestId('format-bold')).toBeVisible();
+  for (const testId of [
+    'format-heading-1',
+    'format-heading-2',
+    'format-heading-3',
+    'format-bold',
+    'format-italic',
+    'format-strike',
+    'format-code',
+    'format-link',
+    'format-image',
+    'format-quote',
+    'format-list',
+    'format-ordered-list',
+    'format-task-list',
+    'format-code-block',
+    'format-rule',
+  ]) {
+    await expect(page.getByTestId(testId)).toBeVisible();
+  }
+
   await selectRenderedText(page, 0, 5);
   await page.getByTestId('format-bold').click();
 

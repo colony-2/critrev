@@ -66,9 +66,41 @@
                   <button
                     type="button"
                     class="format-button"
+                    data-testid="format-heading-1"
+                    data-format-action="line"
+                    data-format-prefix="# "
+                    data-format-suffix=""
+                    aria-label="Heading 1">
+                    H1
+                  </button>
+                  <button
+                    type="button"
+                    class="format-button"
+                    data-testid="format-heading-2"
+                    data-format-action="line"
+                    data-format-prefix="## "
+                    data-format-suffix=""
+                    aria-label="Heading 2">
+                    H2
+                  </button>
+                  <button
+                    type="button"
+                    class="format-button"
+                    data-testid="format-heading-3"
+                    data-format-action="line"
+                    data-format-prefix="### "
+                    data-format-suffix=""
+                    aria-label="Heading 3">
+                    H3
+                  </button>
+                  <button
+                    type="button"
+                    class="format-button"
                     data-testid="format-bold"
+                    data-format-action="inline"
                     data-format-prefix="**"
                     data-format-suffix="**"
+                    data-rich-format="bold"
                     aria-label="Bold">
                     B
                   </button>
@@ -76,20 +108,122 @@
                     type="button"
                     class="format-button italic"
                     data-testid="format-italic"
+                    data-format-action="inline"
                     data-format-prefix="*"
                     data-format-suffix="*"
+                    data-rich-format="italic"
                     aria-label="Italic">
                     I
                   </button>
                   <button
                     type="button"
+                    class="format-button strike"
+                    data-testid="format-strike"
+                    data-format-action="inline"
+                    data-format-prefix="~~"
+                    data-format-suffix="~~"
+                    data-rich-format="strikethrough"
+                    aria-label="Strikethrough">
+                    S
+                  </button>
+                  <button
+                    type="button"
                     class="format-button code"
                     data-testid="format-code"
+                    data-format-action="inline"
                     data-format-prefix="`"
                     data-format-suffix="`"
+                    data-rich-format="code"
                     aria-label="Code">
                     &lt;/&gt;
                   </button>
+                  <button
+                    type="button"
+                    class="format-button"
+                    data-testid="format-link"
+                    data-format-action="inline"
+                    data-format-prefix="["
+                    data-format-suffix="](https://example.com)"
+                    data-format-placeholder="link"
+                    aria-label="Link">
+                    Link
+                  </button>
+                  <button
+                    type="button"
+                    class="format-button"
+                    data-testid="format-image"
+                    data-format-action="inline"
+                    data-format-prefix="!["
+                    data-format-suffix="](https://example.com/image.png)"
+                    data-format-placeholder="alt"
+                    aria-label="Image">
+                    Img
+                  </button>
+                  <button
+                    type="button"
+                    class="format-button"
+                    data-testid="format-quote"
+                    data-format-action="line"
+                    data-format-prefix="> "
+                    data-format-suffix=""
+                    aria-label="Block quote">
+                    Q
+                  </button>
+                  <button
+                    type="button"
+                    class="format-button"
+                    data-testid="format-list"
+                    data-format-action="line"
+                    data-format-prefix="- "
+                    data-format-suffix=""
+                    aria-label="Bulleted list">
+                    UL
+                  </button>
+                  <button
+                    type="button"
+                    class="format-button"
+                    data-testid="format-ordered-list"
+                    data-format-action="line"
+                    data-format-prefix="{n}. "
+                    data-format-suffix=""
+                    aria-label="Numbered list">
+                    1.
+                  </button>
+                  <button
+                    type="button"
+                    class="format-button"
+                    data-testid="format-task-list"
+                    data-format-action="line"
+                    data-format-prefix="- [ ] "
+                    data-format-suffix=""
+                    aria-label="Task list">
+                    [ ]
+                  </button>
+                  <button
+                    type="button"
+                    class="format-button code"
+                    data-testid="format-code-block"
+                    data-format-action="block"
+                    data-format-prefix="```\n"
+                    data-format-suffix="\n```"
+                    data-format-placeholder="code"
+                    aria-label="Code block">
+                    ```
+                  </button>
+                  <button
+                    type="button"
+                    class="format-button"
+                    data-testid="format-rule"
+                    data-format-action="block"
+                    data-format-prefix="\n---\n"
+                    data-format-suffix=""
+                    aria-label="Horizontal rule">
+                    HR
+                  </button>
+                </div>
+                <div class="content-mode-toggle" aria-label="Editor content mode">
+                  <button type="button" class="active" data-content-mode="wysiwyg">WYSIWYG</button>
+                  <button type="button" data-content-mode="source">Text</button>
                 </div>
                 <div class="toolbar-menu">
                   <button

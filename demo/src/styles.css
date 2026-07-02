@@ -134,6 +134,7 @@ button:hover {
 
 .format-toolbar {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-right: auto;
   min-width: 0;
@@ -141,7 +142,7 @@ button:hover {
 
 .format-button {
   display: inline-grid;
-  width: 36px;
+  min-width: 36px;
   min-height: 36px;
   place-items: center;
   padding: 0;
@@ -156,6 +157,28 @@ button:hover {
 .format-button.code {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
+}
+
+.content-mode-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border: 1px solid #b8c1c8;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.content-mode-toggle button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 0;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.content-mode-toggle button.active {
+  background: #e6f4ea;
+  color: #137333;
 }
 
 .toolbar-menu {
@@ -328,6 +351,15 @@ mark[data-comment-value] {
 }
 
 .review-change {
+  cursor: text;
+}
+
+.rendered-review ins,
+.rendered-review del,
+.rendered-review mark,
+.rendered-review .review-change,
+.rendered-review .comment-anchor,
+.rendered-review .comment-anchor * {
   cursor: text;
 }
 
