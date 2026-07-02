@@ -122,6 +122,50 @@ test('rendered review edits become suggestions instead of hard changes', async (
   await expect(page.getByTestId('final-output')).toHaveValue('Plain text now');
 });
 
+test('typing in unchanged text keeps the caret at the insertion point', async ({page}) => {
+  await page.goto('/');
+
+  await page.getByRole('button', {name: 'Load'}).click();
+  await setRenderedCaret(page, 2);
+  await page.keyboard.type('XYZ');
+
+  await expect(page.getByTestId('critic-output')).toHaveValue(
+    sampleEditorMarkup.replace('this ', 'th{++XYZ++}is '),
+  );
+  await expect(page.getByTestId('rendered-review')).not.toContainText('{++');
+  await expect(page.getByTestId('rendered-review').locator('ins').filter({hasText: 'XYZ'})).toHaveCount(1);
+  expect(await renderedCaretOffset(page)).toBe(5);
+});
+
+test('backspacing unchanged text creates a deletion without moving the caret to the start', async ({page}) => {
+  await page.goto('/');
+
+  await page.getByTestId('critic-input').fill('Plain text');
+  await page.getByRole('button', {name: 'Load'}).click();
+
+  await setRenderedCaret(page, 5);
+  await page.keyboard.press('Backspace');
+
+  await expect(page.getByTestId('critic-output')).toHaveValue('Plai{--n--} text');
+  await expect(page.getByTestId('rendered-review')).not.toContainText('{--');
+  await expect(page.getByTestId('rendered-review').locator('del')).toContainText('n');
+  expect(await renderedCaretOffset(page)).toBe(4);
+});
+
+test('typing inside an existing addition extends that suggestion', async ({page}) => {
+  await page.goto('/');
+
+  await page.getByTestId('critic-input').fill('Plain {++ad++}');
+  await page.getByRole('button', {name: 'Load'}).click();
+
+  await setRenderedCaret(page, 7);
+  await page.keyboard.type('bc');
+
+  await expect(page.getByTestId('critic-output')).toHaveValue('Plain {++abcd++}');
+  await expect(page.getByTestId('rendered-review').locator('ins')).toHaveText('abcd');
+  expect(await renderedCaretOffset(page)).toBe(9);
+});
+
 test('editing inside an existing addition keeps it editable as one suggestion', async ({page}) => {
   await page.goto('/');
 
@@ -302,4 +346,53 @@ async function selectRenderedText(page: import('@playwright/test').Page, start: 
     },
     {end, start},
   );
+}
+
+async function setRenderedCaret(page: import('@playwright/test').Page, offset: number) {
+  await page.getByTestId('rendered-review').evaluate((element, targetOffset) => {
+    const root = element as HTMLElement;
+    const visibleTextPosition = (root: HTMLElement): {node: Node; offset: number} => {
+      let remaining = Math.max(0, targetOffset);
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+
+      while (node !== null) {
+        const length = node.nodeValue?.length ?? 0;
+        if (remaining <= length) {
+          return {node, offset: remaining};
+        }
+        remaining -= length;
+        node = walker.nextNode();
+      }
+
+      return {node: root, offset: root.childNodes.length};
+    };
+
+    const position = visibleTextPosition(root);
+    const selection = window.getSelection();
+    const range = document.createRange();
+    root.focus();
+    range.setStart(position.node, position.offset);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, offset);
+}
+
+async function renderedCaretOffset(page: import('@playwright/test').Page): Promise<number> {
+  return page.getByTestId('rendered-review').evaluate(element => {
+    const selection = window.getSelection();
+    if (selection === null || selection.rangeCount === 0 || !selection.isCollapsed) {
+      return -1;
+    }
+    const range = selection.getRangeAt(0);
+    if (!element.contains(range.endContainer)) {
+      return -1;
+    }
+
+    const prefixRange = document.createRange();
+    prefixRange.selectNodeContents(element);
+    prefixRange.setEnd(range.endContainer, range.endOffset);
+    return prefixRange.toString().length;
+  });
 }

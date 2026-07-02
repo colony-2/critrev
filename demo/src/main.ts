@@ -479,6 +479,7 @@ function applyRenderedEditAsSuggestion(): void {
     return;
   }
 
+  const selectionOffset = renderedSelectionOffset();
   const domModel = renderedDomToReviewModel(renderedReview, editBaselineModel);
   const nextModel = reconcileRenderedEdit(editBaselineModel, domModel);
   const shouldRerenderEditor = nextModel !== domModel;
@@ -490,11 +491,135 @@ function applyRenderedEditAsSuggestion(): void {
   hideCommentDisplay();
   if (shouldRerenderEditor) {
     renderEditorOutput();
+    restoreRenderedSelectionOffset(selectionOffset);
     statusPill.textContent = 'Suggestion added';
   } else {
     refreshDerivedPanels();
     statusPill.textContent = 'Suggestion updated';
   }
+}
+
+function renderedSelectionOffset(): number | null {
+  const selection = window.getSelection();
+  if (
+    selection === null ||
+    selection.rangeCount === 0 ||
+    !selection.isCollapsed ||
+    !selectionWithinRenderedReview(selection)
+  ) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0).cloneRange();
+  const prefixRange = document.createRange();
+  prefixRange.selectNodeContents(renderedReview);
+  prefixRange.setEnd(range.endContainer, range.endOffset);
+
+  const container = document.createElement('div');
+  container.append(prefixRange.cloneContents());
+  return renderedDomToReviewModel(container, editorModel).text.length;
+}
+
+function restoreRenderedSelectionOffset(offset: number | null): void {
+  if (offset === null) {
+    return;
+  }
+
+  const position = findRenderedPositionAtOffset(renderedReview, offset);
+  const range = document.createRange();
+  range.setStart(position.node, position.offset);
+  range.collapse(true);
+
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function findRenderedPositionAtOffset(root: HTMLElement, offset: number): {node: Node; offset: number} {
+  let remaining = Math.max(0, offset);
+
+  const childPosition = (node: Node, child: Node, adjustment = 0): {node: Node; offset: number} => ({
+    node,
+    offset: Array.prototype.indexOf.call(node.childNodes, child) + adjustment,
+  });
+
+  const visitChildren = (node: Node): {node: Node; offset: number} | null => {
+    for (const child of Array.from(node.childNodes)) {
+      const position = visit(child);
+      if (position !== null) {
+        return position;
+      }
+    }
+    return null;
+  };
+
+  const visit = (node: Node): {node: Node; offset: number} | null => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const length = node.nodeValue?.length ?? 0;
+      if (remaining <= length) {
+        return {node, offset: remaining};
+      }
+      remaining -= length;
+      return null;
+    }
+
+    if (!(node instanceof HTMLElement)) {
+      return null;
+    }
+
+    if (node.matches('.comment-anchor')) {
+      return null;
+    }
+
+    if (node.tagName === 'BR') {
+      if (remaining <= 1 && node.parentNode !== null) {
+        return childPosition(node.parentNode, node, 1);
+      }
+      remaining -= 1;
+      return null;
+    }
+
+    const markerLength = markdownMarkerLength(node);
+    if (markerLength > 0) {
+      if (remaining <= markerLength) {
+        return {node, offset: 0};
+      }
+      remaining -= markerLength;
+    }
+
+    const childMatch = visitChildren(node);
+    if (childMatch !== null) {
+      return childMatch;
+    }
+
+    if (markerLength > 0) {
+      if (remaining <= markerLength) {
+        return {node, offset: node.childNodes.length};
+      }
+      remaining -= markerLength;
+    }
+
+    if (node.tagName === 'DIV' || node.tagName === 'P') {
+      if (remaining <= 1) {
+        return {node, offset: node.childNodes.length};
+      }
+      remaining -= 1;
+    }
+
+    return null;
+  };
+
+  return visitChildren(root) ?? {node: root, offset: root.childNodes.length};
+}
+
+function markdownMarkerLength(node: HTMLElement): number {
+  if (node.tagName === 'STRONG' || node.tagName === 'B') {
+    return 2;
+  }
+  if (node.tagName === 'CODE') {
+    return 1;
+  }
+  return 0;
 }
 
 function showCommentPopover(clientX: number, clientY: number): void {
