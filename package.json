@@ -32,5 +32,12 @@
     "@types/node": "^26.1.0",
     "typescript": "^5.9.0",
     "vite": "^7.2.7"
+  },
+  "dependencies": {
+    "@lexical/history": "^0.46.0",
+    "@lexical/rich-text": "^0.46.0",
+    "@lexical/selection": "^0.46.0",
+    "@lexical/utils": "^0.46.0",
+    "lexical": "^0.46.0"
   }
 }
