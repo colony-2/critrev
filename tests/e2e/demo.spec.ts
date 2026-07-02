@@ -55,6 +55,7 @@ test('renders revisions with Google Docs-style inline marks only', async ({page}
     return {
       backgroundColor: style.backgroundColor,
       color: style.color,
+      cursor: style.cursor,
       textDecorationLine: style.textDecorationLine,
     };
   });
@@ -63,22 +64,33 @@ test('renders revisions with Google Docs-style inline marks only', async ({page}
     return {
       backgroundColor: style.backgroundColor,
       color: style.color,
+      cursor: style.cursor,
       textDecorationColor: style.textDecorationColor,
       textDecorationLine: style.textDecorationLine,
     };
   });
+  const rangeCommentCursor = await page.getByTestId('range-comment').evaluate(element =>
+    getComputedStyle(element).cursor,
+  );
+  const pointCommentCursor = await page.getByTestId('comment-anchor').evaluate(element =>
+    getComputedStyle(element).cursor,
+  );
 
   expect(additionStyle).toEqual({
     backgroundColor: 'rgba(0, 0, 0, 0)',
     color: 'rgb(24, 128, 56)',
+    cursor: 'text',
     textDecorationLine: 'none',
   });
   expect(deletionStyle).toEqual({
     backgroundColor: 'rgba(0, 0, 0, 0)',
     color: 'rgb(32, 33, 36)',
+    cursor: 'text',
     textDecorationColor: 'rgb(24, 128, 56)',
     textDecorationLine: 'line-through',
   });
+  expect(rangeCommentCursor).toBe('text');
+  expect(pointCommentCursor).toBe('text');
 });
 
 test('toggles between revisions, reject-all preview, and accept-all preview', async ({page}) => {
@@ -135,6 +147,21 @@ test('typing in unchanged text keeps the caret at the insertion point', async ({
   await expect(page.getByTestId('rendered-review')).not.toContainText('{++');
   await expect(page.getByTestId('rendered-review').locator('ins').filter({hasText: 'XYZ'})).toHaveCount(1);
   expect(await renderedCaretOffset(page)).toBe(5);
+});
+
+test('format toolbar suggests markdown formatting for selected text', async ({page}) => {
+  await page.goto('/');
+
+  await page.getByTestId('critic-input').fill('Plain text');
+  await page.getByRole('button', {name: 'Load'}).click();
+
+  await expect(page.getByTestId('format-bold')).toBeVisible();
+  await selectRenderedText(page, 0, 5);
+  await page.getByTestId('format-bold').click();
+
+  await expect(page.getByTestId('critic-output')).toHaveValue('{~~Plain~>**Plain**~~} text');
+  await expect(page.locator('.change-description')).toContainText('Plain changed to Plain');
+  await expect(page.getByTestId('final-output')).toHaveValue('**Plain** text');
 });
 
 test('backspacing unchanged text creates a deletion without moving the caret to the start', async ({page}) => {

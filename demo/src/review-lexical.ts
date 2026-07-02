@@ -36,6 +36,7 @@ import {
 
 export type ReviewLexicalAdapter = {
   dispose(): void;
+  applyMarkdownFormat(prefix: string, suffix: string): void;
   focus(): void;
   getModel(): ReviewModel;
   getSelectionOffset(): number | null;
@@ -283,6 +284,14 @@ export function createReviewLexicalAdapter(
   );
 
   return {
+    applyMarkdownFormat(prefix: string, suffix: string) {
+      editor.update(
+        () => {
+          applyMarkdownFormatToSelection(prefix, suffix);
+        },
+        {discrete: true},
+      );
+    },
     dispose() {
       cleanup();
       editor.setRootElement(null);
@@ -469,6 +478,10 @@ function offsetInsideSelectionNode(node: LexicalNode, offset: number): number {
     return Math.min(offset, node.getTextContent().length);
   }
 
+  if ($isLineBreakNode(node)) {
+    return Math.min(offset, 1);
+  }
+
   if (!$isElementNode(node)) {
     return 0;
   }
@@ -477,6 +490,85 @@ function offsetInsideSelectionNode(node: LexicalNode, offset: number): number {
     .getChildren()
     .slice(0, offset)
     .reduce((total, child) => total + child.getTextContent().length, 0);
+}
+
+function applyMarkdownFormatToSelection(prefix: string, suffix: string): void {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) {
+    return;
+  }
+
+  const range = selectionRangeOffset(selection);
+  const selectedText = selection.getTextContent();
+  const formattedText = `${prefix}${selectedText}${suffix}`;
+  selection.insertText(formattedText);
+
+  if (range === null) {
+    return;
+  }
+
+  const nextOffset = selectedText.length === 0
+    ? range.start + prefix.length
+    : range.start + formattedText.length;
+  selectLexicalOffset(nextOffset);
+}
+
+function selectionRangeOffset(selection: ReturnType<typeof $getSelection>): ReviewRange | null {
+  if (!$isRangeSelection(selection)) {
+    return null;
+  }
+
+  const anchorOffset = offsetForLexicalPoint(selection.anchor.key, selection.anchor.offset);
+  const focusOffset = offsetForLexicalPoint(selection.focus.key, selection.focus.offset);
+  if (anchorOffset === null || focusOffset === null) {
+    return null;
+  }
+
+  return anchorOffset <= focusOffset
+    ? {end: focusOffset, start: anchorOffset}
+    : {end: anchorOffset, start: focusOffset};
+}
+
+function offsetForLexicalPoint(key: string, offset: number): number | null {
+  const root = $getRoot();
+  if (root.getKey() === key) {
+    return offsetInsideSelectionNode(root, offset);
+  }
+
+  let textOffset = 0;
+  let match: number | null = null;
+
+  const visit = (node: LexicalNode): void => {
+    if (match !== null) {
+      return;
+    }
+
+    if (node.getKey() === key) {
+      match = textOffset + offsetInsideSelectionNode(node, offset);
+      return;
+    }
+
+    if ($isReviewCommentAnchorNode(node)) {
+      return;
+    }
+
+    if ($isTextNode(node) || $isLineBreakNode(node)) {
+      textOffset += node.getTextContent().length;
+      return;
+    }
+
+    if ($isElementNode(node)) {
+      for (const child of node.getChildren()) {
+        visit(child);
+      }
+    }
+  };
+
+  for (const child of root.getChildren()) {
+    visit(child);
+  }
+
+  return match;
 }
 
 function selectLexicalOffset(offset: number): void {

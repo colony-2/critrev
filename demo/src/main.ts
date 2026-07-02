@@ -50,6 +50,9 @@ const viewModeToggle = getElement<HTMLButtonElement>('view-mode-toggle');
 const viewModeButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-view-mode]'),
 );
+const formatButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('[data-format-prefix]'),
+);
 let activeViewMode: ViewMode = 'revisions';
 let activeChangeIndex: number | null = null;
 let editorModel: ReviewModel = emptyReviewModel();
@@ -99,6 +102,14 @@ afterInput.addEventListener('input', updateGeneratedOnly);
 editorInput.addEventListener('input', () => {
   statusPill.textContent = 'Input edited';
 });
+for (const button of formatButtons) {
+  button.addEventListener('mousedown', event => {
+    event.preventDefault();
+  });
+  button.addEventListener('click', () => {
+    applyMarkdownFormat(button);
+  });
+}
 changeList.addEventListener('click', event => {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
     'button[data-change-index][data-decision]',
@@ -238,7 +249,15 @@ function renderEditorOutput(): void {
   const visibleModel = modelForView(editorModel, activeViewMode);
   reviewEditor.setModel(visibleModel);
   reviewEditor.setEditable(activeViewMode === 'revisions');
+  syncFormatToolbarState();
   refreshDerivedPanels();
+}
+
+function syncFormatToolbarState(): void {
+  const disabled = activeViewMode !== 'revisions';
+  for (const button of formatButtons) {
+    button.disabled = disabled;
+  }
 }
 
 function rerenderEditorAtSelectionOffset(selectionOffset: number | null): void {
@@ -292,6 +311,21 @@ function renderChangeCard(change: ReviewChange): string {
       <button type="button" data-testid="reject-change" data-change-index="${change.changeIndex}" data-decision="reject">Reject</button>
     </div>
   </section>`;
+}
+
+function applyMarkdownFormat(button: HTMLButtonElement): void {
+  if (activeViewMode !== 'revisions') {
+    return;
+  }
+
+  const prefix = button.dataset.formatPrefix ?? '';
+  const suffix = button.dataset.formatSuffix ?? prefix;
+  if (prefix.length === 0 && suffix.length === 0) {
+    return;
+  }
+
+  reviewEditor.applyMarkdownFormat(prefix, suffix);
+  statusPill.textContent = 'Formatting suggested';
 }
 
 function describeChange(change: ReviewChange): string {
