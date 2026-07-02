@@ -4,7 +4,9 @@ import test from 'node:test';
 import {
   beforeAfterToCriticMarkup,
   finalizeCriticMarkup,
+  listCriticMarkupChanges,
   parseCriticMarkup,
+  resolveCriticMarkupChange,
   serializeCriticMarkup,
 } from './critic-markup.js';
 
@@ -120,4 +122,49 @@ test('before/after conversion keeps a formatting-boundary edit atomic', () => {
     'this {~~is **a great idea** for us.~>**great** for us~~}',
   );
   assert.equal(finalizeCriticMarkup(criticMarkup), after);
+});
+
+test('lists change markers as user-visible accept/reject units', () => {
+  assert.deepEqual(
+    listCriticMarkupChanges('a {++b++} {--c--} {~~d~>e~~} {>>note<<}'),
+    [
+      {
+        changeIndex: 0,
+        nodeIndex: 1,
+        type: 'addition',
+        oldValue: '',
+        newValue: 'b',
+      },
+      {
+        changeIndex: 1,
+        nodeIndex: 3,
+        type: 'deletion',
+        oldValue: 'c',
+        newValue: '',
+      },
+      {
+        changeIndex: 2,
+        nodeIndex: 5,
+        type: 'substitution',
+        oldValue: 'd',
+        newValue: 'e',
+      },
+    ],
+  );
+});
+
+test('resolves individual changes before finalization', () => {
+  assert.equal(resolveCriticMarkupChange('a {++b++} c', 0, 'reject'), 'a  c');
+  assert.equal(resolveCriticMarkupChange('a {--b--} c', 0, 'reject'), 'a b c');
+  assert.equal(resolveCriticMarkupChange('a {--b--} c', 0, 'accept'), 'a  c');
+  assert.equal(resolveCriticMarkupChange('a {~~b~>c~~} d', 0, 'reject'), 'a b d');
+});
+
+test('rejects a formatted-boundary substitution as one change', () => {
+  const criticMarkup = 'this {~~is **a great idea** for us.~>**great** for us~~}';
+
+  assert.equal(
+    resolveCriticMarkupChange(criticMarkup, 0, 'reject'),
+    'this is **a great idea** for us.',
+  );
 });

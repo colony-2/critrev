@@ -3,7 +3,11 @@ import './styles.css';
 import {
   beforeAfterToCriticMarkup,
   finalizeCriticMarkup,
+  listCriticMarkupChanges,
   parseCriticMarkup,
+  resolveCriticMarkupChange,
+  type CriticMarkupChange,
+  type CriticMarkupChangeDecision,
   type CriticMarkupNode,
 } from '../../src/index';
 
@@ -17,6 +21,7 @@ const finalOutput = getElement<HTMLTextAreaElement>('final-output');
 const cleanOutput = getElement<HTMLTextAreaElement>('clean-output');
 const renderedReview = getElement<HTMLElement>('rendered-review');
 const metrics = getElement<HTMLElement>('metrics');
+const changeList = getElement<HTMLElement>('change-list');
 const statusPill = getElement<HTMLElement>('status-pill');
 
 beforeInput.value = sampleBefore;
@@ -33,6 +38,19 @@ getElement<HTMLButtonElement>('sync-review').addEventListener('click', syncCriti
 beforeInput.addEventListener('input', updateGeneratedOnly);
 afterInput.addEventListener('input', updateGeneratedOnly);
 criticInput.addEventListener('input', renderCriticMarkup);
+changeList.addEventListener('click', event => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+    'button[data-change-index][data-decision]',
+  );
+  if (button === null) {
+    return;
+  }
+
+  const changeIndex = Number(button.dataset.changeIndex);
+  const decision = button.dataset.decision as CriticMarkupChangeDecision;
+  criticInput.value = resolveCriticMarkupChange(criticInput.value, changeIndex, decision);
+  renderCriticMarkup();
+});
 
 syncCriticMarkup();
 
@@ -52,10 +70,34 @@ function renderCriticMarkup(): void {
   finalOutput.value = finalizeCriticMarkup(nodes);
   cleanOutput.value = finalizeCriticMarkup(nodes, {preserveComments: false});
   metrics.innerHTML = renderMetrics(nodes);
+  changeList.innerHTML = renderChangeList(listCriticMarkupChanges(nodes));
   statusPill.textContent =
     criticInput.value === beforeAfterToCriticMarkup(beforeInput.value, afterInput.value)
       ? 'Synced'
       : 'Edited';
+}
+
+function renderChangeList(changes: readonly CriticMarkupChange[]): string {
+  if (changes.length === 0) {
+    return '<p class="empty">No pending change markers</p>';
+  }
+
+  return changes.map(renderChangeCard).join('');
+}
+
+function renderChangeCard(change: CriticMarkupChange): string {
+  return `<section class="change-card">
+    <div>
+      <p class="change-type">${change.type}</p>
+      <code>${escapeHtml(change.oldValue || 'empty')}</code>
+      <span class="arrow">to</span>
+      <code>${escapeHtml(change.newValue || 'empty')}</code>
+    </div>
+    <div class="change-actions">
+      <button type="button" data-change-index="${change.changeIndex}" data-decision="accept">Accept</button>
+      <button type="button" data-change-index="${change.changeIndex}" data-decision="reject">Reject</button>
+    </div>
+  </section>`;
 }
 
 function renderNodes(nodes: readonly CriticMarkupNode[]): string {

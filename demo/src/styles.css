@@ -227,6 +227,51 @@ mark {
   color: #202124;
 }
 
+.change-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.change-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  border: 1px solid #d4dce1;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcfd;
+}
+
+.change-card code {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  border: 1px solid #d4dce1;
+  border-radius: 5px;
+  padding: 2px 5px;
+  background: #ffffff;
+  color: #202124;
+  font-size: 12px;
+}
+
+.change-type {
+  margin: 0 0 6px;
+  color: #5f6368;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.change-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.change-actions button {
+  flex: 1;
+}
+
 .empty {
   margin: 0;
   color: #5f6368;
@@ -244,6 +289,15 @@ mark {
   .preview-panel,
   .output-panel {
     min-height: 360px;
+  }
+
+  .change-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .change-actions button {
+    min-width: 78px;
   }
 }
 

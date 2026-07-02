@@ -26,6 +26,16 @@ export type BeforeAfterToCriticMarkupOptions = {
   readonly normalizeLineEndings?: boolean;
 };
 
+export type CriticMarkupChangeDecision = 'accept' | 'reject';
+
+export type CriticMarkupChange = {
+  readonly changeIndex: number;
+  readonly nodeIndex: number;
+  readonly type: 'addition' | 'deletion' | 'substitution';
+  readonly oldValue: string;
+  readonly newValue: string;
+};
+
 type SimpleMarkerType = Exclude<CriticMarkupNode['type'], 'text' | 'substitution'>;
 
 type SimpleMarker = {
@@ -232,6 +242,88 @@ export function beforeAfterToCriticMarkup(
   return outputLines.join('\n');
 }
 
+export function listCriticMarkupChanges(
+  input: string | readonly CriticMarkupNode[],
+): CriticMarkupChange[] {
+  const nodes = typeof input === 'string' ? parseCriticMarkup(input) : input;
+  const changes: CriticMarkupChange[] = [];
+
+  nodes.forEach((node, nodeIndex) => {
+    switch (node.type) {
+      case 'addition':
+        changes.push({
+          changeIndex: changes.length,
+          nodeIndex,
+          type: 'addition',
+          oldValue: '',
+          newValue: node.value,
+        });
+        break;
+      case 'deletion':
+        changes.push({
+          changeIndex: changes.length,
+          nodeIndex,
+          type: 'deletion',
+          oldValue: node.value,
+          newValue: '',
+        });
+        break;
+      case 'substitution':
+        changes.push({
+          changeIndex: changes.length,
+          nodeIndex,
+          type: 'substitution',
+          oldValue: node.oldValue,
+          newValue: node.newValue,
+        });
+        break;
+      case 'comment':
+      case 'highlight':
+      case 'text':
+        break;
+    }
+  });
+
+  return changes;
+}
+
+export function resolveCriticMarkupChange(
+  input: string,
+  changeIndex: number,
+  decision: CriticMarkupChangeDecision,
+): string {
+  return serializeCriticMarkup(
+    resolveCriticMarkupChangeNodes(parseCriticMarkup(input), changeIndex, decision),
+  );
+}
+
+export function resolveCriticMarkupChangeNodes(
+  nodes: readonly CriticMarkupNode[],
+  changeIndex: number,
+  decision: CriticMarkupChangeDecision,
+): CriticMarkupNode[] {
+  const changes = listCriticMarkupChanges(nodes);
+  const change = changes[changeIndex];
+  if (change === undefined) {
+    throw new RangeError(`No CriticMarkup change exists at index ${changeIndex}`);
+  }
+
+  const nextNodes = nodes.slice();
+  const node = nextNodes[change.nodeIndex];
+  if (node === undefined) {
+    throw new RangeError(`No CriticMarkup node exists at index ${change.nodeIndex}`);
+  }
+
+  const replacement = resolvedNodeText(node, decision);
+  if (replacement === '') {
+    nextNodes.splice(change.nodeIndex, 1);
+  } else {
+    nextNodes.splice(change.nodeIndex, 1, {type: 'text', value: replacement});
+  }
+
+  return mergeAdjacentTextNodes(nextNodes);
+}
+
 function serializeNode(node: CriticMarkupNode): string {
   switch (node.type) {
     case 'text':
@@ -413,6 +505,32 @@ function pushNode(nodes: CriticMarkupNode[], node: CriticMarkupNode): void {
     return;
   }
   nodes.push(node);
+}
+
+function resolvedNodeText(
+  node: CriticMarkupNode,
+  decision: CriticMarkupChangeDecision,
+): string {
+  switch (node.type) {
+    case 'addition':
+      return decision === 'accept' ? node.value : '';
+    case 'deletion':
+      return decision === 'accept' ? '' : node.value;
+    case 'substitution':
+      return decision === 'accept' ? node.newValue : node.oldValue;
+    case 'comment':
+    case 'highlight':
+    case 'text':
+      throw new TypeError(`Cannot resolve non-change CriticMarkup node "${node.type}"`);
+  }
+}
+
+function mergeAdjacentTextNodes(nodes: readonly CriticMarkupNode[]): CriticMarkupNode[] {
+  const mergedNodes: CriticMarkupNode[] = [];
+  for (const node of nodes) {
+    pushNode(mergedNodes, node);
+  }
+  return mergedNodes;
 }
 
 function findUnescaped(
