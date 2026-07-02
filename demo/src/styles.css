@@ -119,18 +119,64 @@ button:hover {
   justify-content: flex-end;
 }
 
-.view-toggle {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 6px;
+.editor-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
   margin-bottom: 10px;
 }
 
-.view-toggle button {
-  min-height: 34px;
+.toolbar-menu {
+  position: relative;
 }
 
-.view-toggle button.active {
+.icon-button {
+  display: inline-grid;
+  width: 36px;
+  min-height: 36px;
+  place-items: center;
+  padding: 0;
+  font-weight: 800;
+}
+
+.icon-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.toolbar-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 210px;
+  border: 1px solid #c7d2d9;
+  border-radius: 8px;
+  padding: 8px;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgb(60 64 67 / 18%);
+}
+
+.toolbar-popover[hidden] {
+  display: none;
+}
+
+.mode-menu {
+  display: grid;
+  gap: 6px;
+}
+
+.mode-menu button {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.mode-menu button.active {
   border-color: #188038;
   background: #e6f4ea;
   color: #137333;
@@ -193,7 +239,13 @@ textarea:focus {
 }
 
 .editor-surface {
+  order: 1;
   position: relative;
+  min-width: 0;
+}
+
+.suggestion-pane {
+  order: 2;
   min-width: 0;
 }
 
@@ -238,18 +290,37 @@ mark {
   outline-offset: 1px;
 }
 
-.comment {
-  display: inline-block;
-  border-radius: 5px;
-  border: 1px solid #e2c15c;
-  padding: 1px 3px;
+.active-review-change {
+  box-shadow: 0 0 0 1px #2f6fed;
+}
+
+.comment-anchor {
+  display: inline-grid;
+  width: 18px;
+  min-height: 18px;
+  margin: 0 2px;
+  place-items: center;
+  vertical-align: -3px;
+  border-color: #d6a500;
+  border-radius: 999px;
+  padding: 0;
   background: #fff8da;
-  color: #4d3b00;
-  font-size: 13px;
+  color: #5f4300;
+}
+
+.comment-anchor svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
 }
 
 .inline-review-actions,
-.comment-popover {
+.comment-popover,
+.comment-display {
   position: absolute;
   z-index: 10;
   border: 1px solid #c7d2d9;
@@ -288,6 +359,17 @@ mark {
   display: none;
 }
 
+.comment-display {
+  max-width: min(280px, calc(100vw - 40px));
+  padding: 10px;
+  color: #202124;
+  font-size: 13px;
+}
+
+.comment-display[hidden] {
+  display: none;
+}
+
 .comment-field {
   display: grid;
   gap: 4px;
@@ -304,6 +386,12 @@ mark {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;
+}
+
+.info-popover .metrics {
+  display: grid;
+  grid-template-columns: 1fr;
+  margin-top: 0;
 }
 
 .metrics span {
@@ -324,7 +412,6 @@ mark {
 .change-list {
   display: grid;
   gap: 8px;
-  margin-top: 12px;
 }
 
 .change-card {
@@ -335,6 +422,17 @@ mark {
   border-radius: 8px;
   padding: 10px;
   background: #fbfcfd;
+}
+
+.change-card.active {
+  border-color: #2f6fed;
+  background: #eef4ff;
+  box-shadow: inset 3px 0 0 #2f6fed;
+}
+
+.change-card:focus {
+  outline: 2px solid #2f6fed;
+  outline-offset: 1px;
 }
 
 .change-type {
@@ -370,10 +468,6 @@ mark {
 @media (min-width: 900px) {
   .app {
     padding: 24px;
-  }
-
-  .view-toggle {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .stage-grid {

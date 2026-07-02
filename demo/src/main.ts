@@ -31,11 +31,17 @@ const changeList = getElement<HTMLElement>('change-list');
 const inlineReviewActions = getElement<HTMLElement>('inline-review-actions');
 const commentPopover = getElement<HTMLFormElement>('comment-popover');
 const commentInput = getElement<HTMLInputElement>('comment-input');
+const commentDisplay = getElement<HTMLElement>('comment-display');
+const infoPopover = getElement<HTMLElement>('info-popover');
+const infoToggle = getElement<HTMLButtonElement>('info-toggle');
 const statusPill = getElement<HTMLElement>('status-pill');
+const viewModeMenu = getElement<HTMLElement>('view-mode-menu');
+const viewModeToggle = getElement<HTMLButtonElement>('view-mode-toggle');
 const viewModeButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-view-mode]'),
 );
 let activeViewMode: ViewMode = 'revisions';
+let activeChangeIndex: number | null = null;
 let editBaselineCriticMarkup = '';
 let longTouchTimer = 0;
 let pendingCommentRange: Range | null = null;
@@ -51,6 +57,24 @@ getElement<HTMLButtonElement>('reset-sample').addEventListener('click', () => {
 
 getElement<HTMLButtonElement>('sync-review').addEventListener('click', syncCriticMarkup);
 getElement<HTMLButtonElement>('load-editor').addEventListener('click', loadEditorInput);
+viewModeToggle.addEventListener('click', () => {
+  toggleToolbarPopover(viewModeMenu, viewModeToggle);
+  hideToolbarPopover(infoPopover, infoToggle);
+});
+infoToggle.addEventListener('click', () => {
+  toggleToolbarPopover(infoPopover, infoToggle);
+  hideToolbarPopover(viewModeMenu, viewModeToggle);
+});
+document.addEventListener('click', event => {
+  const target = event.target as HTMLElement;
+  if (target.closest('.toolbar-menu') === null) {
+    hideToolbarPopover(viewModeMenu, viewModeToggle);
+    hideToolbarPopover(infoPopover, infoToggle);
+  }
+  if (target.closest('[data-comment-value]') === null && target.closest('#comment-display') === null) {
+    hideCommentDisplay();
+  }
+});
 
 beforeInput.addEventListener('input', updateGeneratedOnly);
 afterInput.addEventListener('input', updateGeneratedOnly);
@@ -62,6 +86,10 @@ changeList.addEventListener('click', event => {
     'button[data-change-index][data-decision]',
   );
   if (button === null) {
+    const card = (event.target as HTMLElement).closest<HTMLElement>('[data-suggestion-index]');
+    if (card !== null) {
+      setActiveChangeIndex(Number(card.dataset.suggestionIndex));
+    }
     return;
   }
 
@@ -69,15 +97,31 @@ changeList.addEventListener('click', event => {
   const decision = button.dataset.decision as CriticMarkupChangeDecision;
   resolveChange(changeIndex, decision);
 });
+changeList.addEventListener('focusin', event => {
+  const card = (event.target as HTMLElement).closest<HTMLElement>('[data-suggestion-index]');
+  if (card !== null) {
+    setActiveChangeIndex(Number(card.dataset.suggestionIndex));
+  }
+});
 renderedReview.addEventListener('beforeinput', () => {
   editBaselineCriticMarkup = editorOutput.value;
 });
 renderedReview.addEventListener('click', event => {
+  const commentAnchor = (event.target as HTMLElement).closest<HTMLElement>(
+    '[data-comment-value]',
+  );
+  if (commentAnchor !== null) {
+    showCommentDisplay(commentAnchor);
+    return;
+  }
+
   const changeElement = (event.target as HTMLElement).closest<HTMLElement>(
     '[data-change-index]',
   );
   if (changeElement === null) {
     hideInlineActions();
+    setActiveChangeIndex(null);
+    hideCommentDisplay();
     return;
   }
   showInlineActions(changeElement);
@@ -90,6 +134,7 @@ renderedReview.addEventListener('keyup', () => {
   const changeElement = element?.closest<HTMLElement>('[data-change-index]');
   if (changeElement === undefined || changeElement === null) {
     hideInlineActions();
+    setActiveChangeIndex(null);
     return;
   }
   showInlineActions(changeElement);
@@ -143,6 +188,8 @@ for (const button of viewModeButtons) {
     }
     hideInlineActions();
     hideCommentPopover();
+    hideCommentDisplay();
+    hideToolbarPopover(viewModeMenu, viewModeToggle);
     renderEditorOutput();
   });
 }
@@ -168,6 +215,7 @@ function sampleEditorInput(): string {
 function initializeEditor(criticMarkup: string): void {
   editorInput.value = criticMarkup;
   editorOutput.value = criticMarkup;
+  activeChangeIndex = null;
   editBaselineCriticMarkup = criticMarkup;
   activeViewMode = 'revisions';
   for (const button of viewModeButtons) {
@@ -178,6 +226,7 @@ function initializeEditor(criticMarkup: string): void {
 
 function loadEditorInput(): void {
   editorOutput.value = editorInput.value;
+  activeChangeIndex = null;
   editBaselineCriticMarkup = editorOutput.value;
   renderEditorOutput();
 }
@@ -199,6 +248,7 @@ function refreshDerivedPanels(nodes: readonly CriticMarkupNode[]): void {
   cleanOutput.value = finalizeCriticMarkup(nodes, {preserveComments: false});
   metrics.innerHTML = renderMetrics(nodes);
   changeList.innerHTML = renderChangeList(listCriticMarkupChanges(nodes));
+  syncActiveSuggestionState();
   statusPill.textContent =
     editorOutput.value === editorInput.value
       ? 'Loaded'
@@ -210,9 +260,11 @@ function resolveChange(
   decision: CriticMarkupChangeDecision,
 ): void {
   editorOutput.value = resolveCriticMarkupChange(editorOutput.value, changeIndex, decision);
+  activeChangeIndex = null;
   editBaselineCriticMarkup = editorOutput.value;
   hideInlineActions();
   hideCommentPopover();
+  hideCommentDisplay();
   renderEditorOutput();
 }
 
@@ -225,7 +277,8 @@ function renderChangeList(changes: readonly CriticMarkupChange[]): string {
 }
 
 function renderChangeCard(change: CriticMarkupChange): string {
-  return `<section class="change-card">
+  const activeClass = change.changeIndex === activeChangeIndex ? ' active' : '';
+  return `<section class="change-card${activeClass}" data-suggestion-index="${change.changeIndex}" data-testid="suggestion-card" tabindex="0">
     <div>
       <p class="change-type">${change.type}</p>
       <p class="change-description">${describeChange(change)}</p>
@@ -290,7 +343,7 @@ function renderNode(
         node.newValue,
       )}</ins>`;
     case 'comment':
-      return `<span class="comment" data-critic-type="comment" contenteditable="false">Comment: ${escapeHtml(node.value)}</span>`;
+      return renderCommentAnchor(node.value);
     case 'highlight':
       return `<mark data-critic-type="highlight">${markdownInlineToHtml(node.value)}</mark>`;
   }
@@ -309,14 +362,26 @@ function describeChange(change: CriticMarkupChange): string {
   return '';
 }
 
+function renderCommentAnchor(value: string): string {
+  const comment = escapeHtml(value);
+  return `<button type="button" class="comment-anchor" data-critic-type="comment" data-comment-value="${comment}" data-testid="comment-anchor" contenteditable="false" aria-label="Show comment">${commentIconSvg()}</button>`;
+}
+
+function commentIconSvg(): string {
+  return `<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 5h14v10H8l-3 3V5Z"></path></svg>`;
+}
+
 function isChangeNode(node: CriticMarkupNode): boolean {
   return node.type === 'addition' || node.type === 'deletion' || node.type === 'substitution';
 }
 
 function showInlineActions(changeElement: HTMLElement): void {
-  inlineReviewActions.dataset.changeIndex = changeElement.dataset.changeIndex ?? '';
+  const changeIndex = Number(changeElement.dataset.changeIndex);
+  inlineReviewActions.dataset.changeIndex = String(changeIndex);
   inlineReviewActions.hidden = false;
+  setActiveChangeIndex(changeIndex);
   hideCommentPopover();
+  hideCommentDisplay();
 
   const changeRect = changeElement.getBoundingClientRect();
   const panel = renderedReview.closest<HTMLElement>('.editor-surface');
@@ -332,6 +397,27 @@ function hideInlineActions(): void {
   inlineReviewActions.removeAttribute('data-change-index');
 }
 
+function setActiveChangeIndex(changeIndex: number | null): void {
+  activeChangeIndex = changeIndex === null || !Number.isFinite(changeIndex) ? null : changeIndex;
+  syncActiveSuggestionState();
+}
+
+function syncActiveSuggestionState(): void {
+  for (const card of changeList.querySelectorAll<HTMLElement>('[data-suggestion-index]')) {
+    card.classList.toggle(
+      'active',
+      Number(card.dataset.suggestionIndex) === activeChangeIndex,
+    );
+  }
+
+  for (const change of renderedReview.querySelectorAll<HTMLElement>('[data-change-index]')) {
+    change.classList.toggle(
+      'active-review-change',
+      Number(change.dataset.changeIndex) === activeChangeIndex,
+    );
+  }
+}
+
 function applyRenderedEditAsSuggestion(): void {
   if (activeViewMode !== 'revisions') {
     renderEditorOutput();
@@ -341,15 +427,18 @@ function applyRenderedEditAsSuggestion(): void {
   const baseline = editBaselineCriticMarkup || editorOutput.value;
   const editedCriticMarkup = renderedReviewToCriticMarkup(renderedReview, activeViewMode);
   editorOutput.value = beforeAfterToCriticMarkup(baseline, editedCriticMarkup);
+  activeChangeIndex = null;
   editBaselineCriticMarkup = editorOutput.value;
   hideInlineActions();
   hideCommentPopover();
+  hideCommentDisplay();
   renderEditorOutput();
   statusPill.textContent = 'Suggestion added';
 }
 
 function showCommentPopover(clientX: number, clientY: number): void {
   hideInlineActions();
+  hideCommentDisplay();
   const selection = window.getSelection();
   pendingCommentRange = selectionWithinRenderedReview(selection)
     ? selection!.getRangeAt(0).cloneRange()
@@ -370,6 +459,28 @@ function showCommentPopover(clientX: number, clientY: number): void {
 function hideCommentPopover(): void {
   commentPopover.hidden = true;
   pendingCommentRange = null;
+}
+
+function showCommentDisplay(commentAnchor: HTMLElement): void {
+  const comment = commentAnchor.dataset.commentValue ?? '';
+  hideInlineActions();
+  hideCommentPopover();
+  setActiveChangeIndex(null);
+
+  commentDisplay.textContent = comment;
+  commentDisplay.hidden = false;
+
+  const anchorRect = commentAnchor.getBoundingClientRect();
+  const panel = renderedReview.closest<HTMLElement>('.editor-surface');
+  const panelRect = panel?.getBoundingClientRect() ?? renderedReview.getBoundingClientRect();
+  const left = Math.max(8, Math.min(anchorRect.left - panelRect.left, panelRect.width - 280));
+  const top = Math.max(8, anchorRect.bottom - panelRect.top + 8);
+  commentDisplay.style.left = `${left}px`;
+  commentDisplay.style.top = `${top}px`;
+}
+
+function hideCommentDisplay(): void {
+  commentDisplay.hidden = true;
 }
 
 function addCommentFromSelection(): void {
@@ -395,18 +506,23 @@ function addCommentFromSelection(): void {
 
   window.getSelection()?.removeAllRanges();
   editorOutput.value = renderedReviewToCriticMarkup(renderedReview, activeViewMode);
+  activeChangeIndex = null;
   editBaselineCriticMarkup = editorOutput.value;
   hideCommentPopover();
+  hideCommentDisplay();
   renderEditorOutput();
   statusPill.textContent = 'Comment added';
 }
 
 function createCommentElement(comment: string): HTMLElement {
-  const element = document.createElement('span');
-  element.className = 'comment';
+  const element = document.createElement('button');
+  element.type = 'button';
+  element.className = 'comment-anchor';
   element.dataset.criticType = 'comment';
+  element.dataset.commentValue = comment;
+  element.setAttribute('aria-label', 'Show comment');
   element.contentEditable = 'false';
-  element.textContent = `Comment: ${comment}`;
+  element.innerHTML = commentIconSvg();
   return element;
 }
 
@@ -424,6 +540,17 @@ function selectionWithinRenderedReview(selection: Selection | null): boolean {
 
 function clearLongTouchTimer(): void {
   window.clearTimeout(longTouchTimer);
+}
+
+function toggleToolbarPopover(popover: HTMLElement, trigger: HTMLButtonElement): void {
+  const isHidden = popover.hidden;
+  popover.hidden = !isHidden;
+  trigger.setAttribute('aria-expanded', String(isHidden));
+}
+
+function hideToolbarPopover(popover: HTMLElement, trigger: HTMLButtonElement): void {
+  popover.hidden = true;
+  trigger.setAttribute('aria-expanded', 'false');
 }
 
 function renderedReviewToCriticMarkup(root: HTMLElement, viewMode: ViewMode): string {
@@ -564,7 +691,7 @@ function nodeToMarkdown(node: Node): string {
 }
 
 function commentElementValue(element: HTMLElement): string {
-  return element.textContent?.replace(/^Comment:\s*/, '') ?? '';
+  return element.dataset.commentValue ?? element.textContent?.replace(/^Comment:\s*/, '') ?? '';
 }
 
 function renderMetrics(nodes: readonly CriticMarkupNode[]): string {

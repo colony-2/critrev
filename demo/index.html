@@ -61,10 +61,42 @@
           </div>
           <div class="editor-shell">
             <div class="editor-surface">
-              <div class="view-toggle" role="group" aria-label="Review display mode">
-                <button type="button" class="active" data-view-mode="revisions">Show revisions</button>
-                <button type="button" data-view-mode="reject">Preview reject all</button>
-                <button type="button" data-view-mode="accept">Preview accept all</button>
+              <div class="editor-toolbar">
+                <div class="toolbar-menu">
+                  <button
+                    type="button"
+                    class="icon-button"
+                    id="view-mode-toggle"
+                    data-testid="view-mode-toggle"
+                    aria-label="Review display mode"
+                    aria-expanded="false"
+                    aria-controls="view-mode-menu">
+                    <svg aria-hidden="true" viewBox="0 0 24 24">
+                      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                  </button>
+                  <div class="toolbar-popover mode-menu" id="view-mode-menu" data-testid="view-mode-menu" hidden>
+                    <button type="button" class="active" data-view-mode="revisions">Show revisions</button>
+                    <button type="button" data-view-mode="reject">Preview reject all</button>
+                    <button type="button" data-view-mode="accept">Preview accept all</button>
+                  </div>
+                </div>
+                <div class="toolbar-menu">
+                  <button
+                    type="button"
+                    class="icon-button"
+                    id="info-toggle"
+                    data-testid="info-toggle"
+                    aria-label="Review summary"
+                    aria-expanded="false"
+                    aria-controls="info-popover">
+                    i
+                  </button>
+                  <div class="toolbar-popover info-popover" id="info-popover" data-testid="info-popover" hidden>
+                    <div class="metrics" id="metrics" aria-label="CriticMarkup counts"></div>
+                  </div>
+                </div>
               </div>
               <div
                 class="rendered-review"
@@ -89,9 +121,9 @@
                 </label>
                 <button type="submit">Add comment</button>
               </form>
+              <div class="comment-display" id="comment-display" data-testid="comment-display" hidden></div>
             </div>
             <aside class="suggestion-pane" aria-label="Suggestions">
-              <div class="metrics" id="metrics" aria-label="CriticMarkup counts"></div>
               <div class="change-list" id="change-list" aria-label="Review changes"></div>
             </aside>
           </div>

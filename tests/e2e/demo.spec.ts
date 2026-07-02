@@ -22,10 +22,13 @@ test('shows each CriticMarkup pipeline stage', async ({page}) => {
 
   await expect(page.getByTestId('rendered-review')).toContainText('is a great idea for us.');
   await expect(page.getByTestId('rendered-review')).toContainText('great for us');
-  await expect(page.getByTestId('rendered-review')).toContainText(sampleRangeComment);
-  await expect(page.getByTestId('rendered-review')).toContainText(samplePointComment);
+  await expect(page.getByTestId('rendered-review')).not.toContainText(sampleRangeComment);
+  await expect(page.getByTestId('rendered-review')).not.toContainText(samplePointComment);
+  await expect(page.getByTestId('comment-anchor')).toHaveCount(2);
   await expect(page.locator('.rendered-review .arrow')).toHaveCount(0);
   await expect(page.locator('.rendered-review .substitution')).toHaveCount(0);
+  await expect(page.getByTestId('info-popover')).toBeHidden();
+  await page.getByTestId('info-toggle').click();
   await expect(page.getByText('2substitution')).toBeVisible();
   await expect(page.getByText('1highlight')).toBeVisible();
   await expect(page.getByText('2comment')).toBeVisible();
@@ -78,16 +81,19 @@ test('toggles between revisions, reject-all preview, and accept-all preview', as
   await page.goto('/');
 
   const renderedReview = page.getByTestId('rendered-review');
+  await page.getByTestId('view-mode-toggle').click();
   await page.getByRole('button', {name: 'Preview reject all'}).click();
   await expect(renderedReview).toContainText('this is a great idea for us.');
   await expect(renderedReview).toContainText('the first draft.');
   await expect(renderedReview).toHaveAttribute('contenteditable', 'false');
 
+  await page.getByTestId('view-mode-toggle').click();
   await page.getByRole('button', {name: 'Preview accept all'}).click();
   await expect(renderedReview).toContainText('this great for us');
   await expect(renderedReview).toContainText('the polished draft.');
   await expect(renderedReview).toHaveAttribute('contenteditable', 'false');
 
+  await page.getByTestId('view-mode-toggle').click();
   await page.getByRole('button', {name: 'Show revisions'}).click();
   await expect(renderedReview).toHaveAttribute('contenteditable', 'true');
   await expect(renderedReview.locator('ins')).toHaveCount(2);
@@ -150,11 +156,20 @@ test('shows inline accept/reject controls from the rendered suggestion', async (
 
   await page.locator('.rendered-review [data-change-index="0"]').first().click();
   await expect(page.getByTestId('inline-review-actions')).toBeVisible();
+  await expect(page.getByTestId('suggestion-card').first()).toHaveClass(/active/);
 
   await page.getByRole('button', {name: 'Reject suggestion'}).click();
   await expect(page.getByTestId('critic-output')).toHaveValue(
     `this is **a great idea** for us.\n\n{==Please ship==}{>>${sampleRangeComment}<<} the {~~first draft.~>polished draft.~~}{>>${samplePointComment}<<}`,
   );
+});
+
+test('clicking inline comment icons opens comment overlays', async ({page}) => {
+  await page.goto('/');
+
+  await page.getByTestId('comment-anchor').first().click();
+  await expect(page.getByTestId('comment-display')).toBeVisible();
+  await expect(page.getByTestId('comment-display')).toHaveText(sampleRangeComment);
 });
 
 test('adds a range comment from selected text with the context menu', async ({page}) => {
@@ -205,6 +220,15 @@ test('phone viewport exposes the same review controls', async ({page}) => {
 
   await expect(page.getByTestId('critic-input')).toBeVisible();
   await expect(page.getByTestId('reject-change').first()).toBeVisible();
+
+  const viewport = page.viewportSize();
+  if (viewport !== null && viewport.width < 900) {
+    const editorBox = await page.getByTestId('rendered-review').boundingBox();
+    const suggestionsBox = await page.locator('.suggestion-pane').boundingBox();
+    expect(editorBox).not.toBeNull();
+    expect(suggestionsBox).not.toBeNull();
+    expect(suggestionsBox!.y).toBeGreaterThan(editorBox!.y + editorBox!.height - 1);
+  }
 
   await page.getByTestId('accept-change').first().click();
   await expect(page.getByTestId('final-output')).toHaveValue(
