@@ -297,7 +297,19 @@ function renderNodes(nodes: readonly CriticMarkupNode[], viewMode: ViewMode): st
 
   let changeIndex = 0;
   let html = '';
-  for (const node of nodes) {
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    if (node === undefined) {
+      continue;
+    }
+
+    const nextNode = nodes[index + 1];
+    if (node.type === 'highlight' && nextNode?.type === 'comment') {
+      html += renderRangeComment(node.value, nextNode.value);
+      index += 1;
+      continue;
+    }
+
     html += renderNode(node, viewMode, changeIndex);
     if (isChangeNode(node)) {
       changeIndex += 1;
@@ -345,7 +357,7 @@ function renderNode(
     case 'comment':
       return renderCommentAnchor(node.value);
     case 'highlight':
-      return `<mark data-critic-type="highlight">${markdownInlineToHtml(node.value)}</mark>`;
+      return renderHighlight(node.value);
   }
   return assertNever(node);
 }
@@ -365,6 +377,14 @@ function describeChange(change: CriticMarkupChange): string {
 function renderCommentAnchor(value: string): string {
   const comment = escapeHtml(value);
   return `<button type="button" class="comment-anchor" data-critic-type="comment" data-comment-value="${comment}" data-testid="comment-anchor" contenteditable="false" aria-label="Show comment">${commentIconSvg()}</button>`;
+}
+
+function renderRangeComment(value: string, commentValue: string): string {
+  return `<mark data-critic-type="highlight" data-comment-value="${escapeHtml(commentValue)}" data-testid="range-comment" tabindex="0">${markdownInlineToHtml(value)}</mark>`;
+}
+
+function renderHighlight(value: string): string {
+  return `<mark data-critic-type="highlight">${markdownInlineToHtml(value)}</mark>`;
 }
 
 function commentIconSvg(): string {
@@ -498,9 +518,10 @@ function addCommentFromSelection(): void {
     const selectedFragment = range.extractContents();
     const mark = document.createElement('mark');
     mark.dataset.criticType = 'highlight';
+    mark.dataset.commentValue = comment;
+    mark.dataset.testid = 'range-comment';
+    mark.tabIndex = 0;
     mark.append(selectedFragment);
-    const commentElement = createCommentElement(comment);
-    range.insertNode(commentElement);
     range.insertNode(mark);
   }
 
@@ -610,6 +631,11 @@ function childNodesToCriticMarkup(nodes: NodeListOf<ChildNode>): string {
       output += serializeCriticMarkup([
         {type: 'highlight', value: childNodesToMarkdown(element.childNodes)},
       ]);
+      if (element.dataset.commentValue !== undefined) {
+        output += serializeCriticMarkup([
+          {type: 'comment', value: commentElementValue(element)},
+        ]);
+      }
       continue;
     }
 

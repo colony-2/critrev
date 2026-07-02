@@ -25,7 +25,8 @@ test('shows each CriticMarkup pipeline stage', async ({page}) => {
   await expect(page.getByTestId('rendered-review')).toContainText('great for us');
   await expect(page.getByTestId('rendered-review')).not.toContainText(sampleRangeComment);
   await expect(page.getByTestId('rendered-review')).not.toContainText(samplePointComment);
-  await expect(page.getByTestId('comment-anchor')).toHaveCount(2);
+  await expect(page.getByTestId('comment-anchor')).toHaveCount(1);
+  await expect(page.getByTestId('range-comment')).toHaveCount(1);
   await expect(page.locator('.rendered-review .arrow')).toHaveCount(0);
   await expect(page.locator('.rendered-review .substitution')).toHaveCount(0);
   await expect(page.getByTestId('info-popover')).toBeHidden();
@@ -165,12 +166,16 @@ test('shows inline accept/reject controls from the rendered suggestion', async (
   );
 });
 
-test('clicking inline comment icons opens comment overlays', async ({page}) => {
+test('clicking range comments and point comment icons opens comment overlays', async ({page}) => {
   await page.goto('/');
+
+  await page.getByTestId('range-comment').click();
+  await expect(page.getByTestId('comment-display')).toBeVisible();
+  await expect(page.getByTestId('comment-display')).toHaveText(sampleRangeComment);
 
   await page.getByTestId('comment-anchor').first().click();
   await expect(page.getByTestId('comment-display')).toBeVisible();
-  await expect(page.getByTestId('comment-display')).toHaveText(sampleRangeComment);
+  await expect(page.getByTestId('comment-display')).toHaveText(samplePointComment);
 });
 
 test('adds a range comment from selected text with the context menu', async ({page}) => {
@@ -193,6 +198,8 @@ test('adds a range comment from selected text with the context menu', async ({pa
   await expect(page.getByTestId('critic-output')).toHaveValue(
     '{==Plain==}{>>Needs detail<<} text for comments',
   );
+  await expect(page.getByTestId('comment-anchor')).toHaveCount(0);
+  await expect(page.getByTestId('range-comment')).toHaveCount(1);
   await expect(page.getByTestId('final-output')).toHaveValue(
     '{==Plain==}{>>Needs detail<<} text for comments',
   );

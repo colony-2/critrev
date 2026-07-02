@@ -292,6 +292,14 @@ mark {
   color: inherit;
 }
 
+mark[data-comment-value] {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: #d6a500;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
 .review-change {
   cursor: pointer;
 }
@@ -375,6 +383,7 @@ mark {
   padding: 10px;
   color: #202124;
   font-size: 13px;
+  pointer-events: none;
 }
 
 .comment-display[hidden] {
