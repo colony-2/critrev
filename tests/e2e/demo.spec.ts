@@ -32,7 +32,7 @@ test('shows each CriticMarkup pipeline stage', async ({page}) => {
   await expect(page.getByTestId('info-popover')).toBeHidden();
   await page.getByTestId('info-toggle').click();
   await expect(page.getByText('2substitution')).toBeVisible();
-  await expect(page.getByText('1highlight')).toBeVisible();
+  await expect(page.getByText('0highlight')).toBeVisible();
   await expect(page.getByText('2comment')).toBeVisible();
   await expect(page.locator('.change-description').first()).toContainText(
     'is a great idea for us. changed to great for us',
@@ -120,6 +120,48 @@ test('rendered review edits become suggestions instead of hard changes', async (
   await expect(page.getByTestId('critic-output')).toHaveValue('Plain text{++ now++}');
   await expect(page.locator('.change-description')).toContainText('now added');
   await expect(page.getByTestId('final-output')).toHaveValue('Plain text now');
+});
+
+test('editing inside an existing addition keeps it editable as one suggestion', async ({page}) => {
+  await page.goto('/');
+
+  await page.getByTestId('critic-input').fill('Plain {++abcd++}');
+  await page.getByRole('button', {name: 'Load'}).click();
+
+  await page.getByTestId('rendered-review').evaluate(element => {
+    const addition = element.querySelector('ins');
+    if (addition?.firstChild === null || addition?.firstChild === undefined) {
+      throw new Error('Missing editable addition text');
+    }
+    addition.firstChild.nodeValue = 'acd';
+    element.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'deleteContentBackward'}));
+  });
+
+  await expect(page.getByTestId('critic-output')).toHaveValue('Plain {++acd++}');
+  await expect(page.getByTestId('rendered-review')).not.toContainText('{++');
+  await expect(page.getByTestId('rendered-review').locator('ins')).toContainText('acd');
+  await expect(page.locator('.change-description')).toContainText('acd added');
+});
+
+test('editing inside an existing deletion keeps it editable as one suggestion', async ({page}) => {
+  await page.goto('/');
+
+  await page.getByTestId('critic-input').fill('Plain {--abcd--}');
+  await page.getByRole('button', {name: 'Load'}).click();
+
+  await page.getByTestId('rendered-review').evaluate(element => {
+    const deletion = element.querySelector('del');
+    if (deletion?.firstChild === null || deletion?.firstChild === undefined) {
+      throw new Error('Missing editable deletion text');
+    }
+    deletion.firstChild.nodeValue = 'acd';
+    element.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'deleteContentBackward'}));
+  });
+
+  await expect(page.getByTestId('critic-output')).toHaveValue('Plain {--acd--}');
+  await expect(page.getByTestId('rendered-review')).not.toContainText('{--');
+  await expect(page.getByTestId('rendered-review').locator('del')).toContainText('acd');
+  await expect(page.locator('.change-description')).toContainText('acd deleted');
 });
 
 test('rendered edits preserve unresolved suggestion markers', async ({page}) => {

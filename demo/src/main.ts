@@ -2,14 +2,20 @@ import './styles.css';
 
 import {
   beforeAfterToCriticMarkup,
-  finalizeCriticMarkup,
-  listCriticMarkupChanges,
-  parseCriticMarkup,
-  resolveCriticMarkupChange,
-  serializeCriticMarkup,
-  type CriticMarkupChange,
-  type CriticMarkupChangeDecision,
-  type CriticMarkupNode,
+  criticMarkupToReviewModel,
+  finalizeReviewModel,
+  insertReviewText,
+  listReviewChanges,
+  resolveReviewModelChange,
+  reviewModelToCriticMarkup,
+  withAddedSuggestion,
+  type ReviewChange,
+  type ReviewChangeDecision,
+  type ReviewComment,
+  type ReviewHighlight,
+  type ReviewModel,
+  type ReviewRange,
+  type ReviewSuggestion,
 } from '../../src/index';
 
 type ViewMode = 'accept' | 'reject' | 'revisions';
@@ -42,7 +48,8 @@ const viewModeButtons = Array.from(
 );
 let activeViewMode: ViewMode = 'revisions';
 let activeChangeIndex: number | null = null;
-let editBaselineCriticMarkup = '';
+let editorModel: ReviewModel = emptyReviewModel();
+let editBaselineModel: ReviewModel = emptyReviewModel();
 let longTouchTimer = 0;
 let pendingCommentRange: Range | null = null;
 
@@ -94,7 +101,7 @@ changeList.addEventListener('click', event => {
   }
 
   const changeIndex = Number(button.dataset.changeIndex);
-  const decision = button.dataset.decision as CriticMarkupChangeDecision;
+  const decision = button.dataset.decision as ReviewChangeDecision;
   resolveChange(changeIndex, decision);
 });
 changeList.addEventListener('focusin', event => {
@@ -104,7 +111,7 @@ changeList.addEventListener('focusin', event => {
   }
 });
 renderedReview.addEventListener('beforeinput', () => {
-  editBaselineCriticMarkup = editorOutput.value;
+  editBaselineModel = cloneReviewModel(editorModel);
 });
 renderedReview.addEventListener('click', event => {
   const commentAnchor = (event.target as HTMLElement).closest<HTMLElement>(
@@ -173,7 +180,7 @@ inlineReviewActions.addEventListener('click', event => {
   }
 
   const changeIndex = Number(inlineReviewActions.dataset.changeIndex);
-  const decision = button.dataset.inlineDecision as CriticMarkupChangeDecision;
+  const decision = button.dataset.inlineDecision as ReviewChangeDecision;
   resolveChange(changeIndex, decision);
 });
 commentPopover.addEventListener('submit', event => {
@@ -214,9 +221,9 @@ function sampleEditorInput(): string {
 
 function initializeEditor(criticMarkup: string): void {
   editorInput.value = criticMarkup;
-  editorOutput.value = criticMarkup;
+  editorModel = criticMarkupToReviewModel(criticMarkup);
   activeChangeIndex = null;
-  editBaselineCriticMarkup = criticMarkup;
+  editBaselineModel = cloneReviewModel(editorModel);
   activeViewMode = 'revisions';
   for (const button of viewModeButtons) {
     button.classList.toggle('active', button.dataset.viewMode === activeViewMode);
@@ -225,9 +232,9 @@ function initializeEditor(criticMarkup: string): void {
 }
 
 function loadEditorInput(): void {
-  editorOutput.value = editorInput.value;
+  editorModel = criticMarkupToReviewModel(editorInput.value);
   activeChangeIndex = null;
-  editBaselineCriticMarkup = editorOutput.value;
+  editBaselineModel = cloneReviewModel(editorModel);
   renderEditorOutput();
 }
 
@@ -237,17 +244,18 @@ function updateGeneratedOnly(): void {
 }
 
 function renderEditorOutput(): void {
-  const nodes = parseCriticMarkup(editorOutput.value);
-  renderedReview.innerHTML = renderNodes(nodes, activeViewMode);
+  const visibleModel = modelForView(editorModel, activeViewMode);
+  renderedReview.innerHTML = renderReviewModel(visibleModel, activeViewMode);
   renderedReview.contentEditable = activeViewMode === 'revisions' ? 'true' : 'false';
-  refreshDerivedPanels(nodes);
+  refreshDerivedPanels();
 }
 
-function refreshDerivedPanels(nodes: readonly CriticMarkupNode[]): void {
-  finalOutput.value = finalizeCriticMarkup(nodes);
-  cleanOutput.value = finalizeCriticMarkup(nodes, {preserveComments: false});
-  metrics.innerHTML = renderMetrics(nodes);
-  changeList.innerHTML = renderChangeList(listCriticMarkupChanges(nodes));
+function refreshDerivedPanels(): void {
+  editorOutput.value = reviewModelToCriticMarkup(editorModel);
+  finalOutput.value = finalizeReviewModel(editorModel);
+  cleanOutput.value = finalizeReviewModel(editorModel, {preserveComments: false});
+  metrics.innerHTML = renderMetrics(editorModel);
+  changeList.innerHTML = renderChangeList(listReviewChanges(editorModel));
   syncActiveSuggestionState();
   statusPill.textContent =
     editorOutput.value === editorInput.value
@@ -257,18 +265,18 @@ function refreshDerivedPanels(nodes: readonly CriticMarkupNode[]): void {
 
 function resolveChange(
   changeIndex: number,
-  decision: CriticMarkupChangeDecision,
+  decision: ReviewChangeDecision,
 ): void {
-  editorOutput.value = resolveCriticMarkupChange(editorOutput.value, changeIndex, decision);
+  editorModel = resolveReviewModelChange(editorModel, changeIndex, decision);
   activeChangeIndex = null;
-  editBaselineCriticMarkup = editorOutput.value;
+  editBaselineModel = cloneReviewModel(editorModel);
   hideInlineActions();
   hideCommentPopover();
   hideCommentDisplay();
   renderEditorOutput();
 }
 
-function renderChangeList(changes: readonly CriticMarkupChange[]): string {
+function renderChangeList(changes: readonly ReviewChange[]): string {
   if (changes.length === 0) {
     return '<p class="empty">No pending change markers</p>';
   }
@@ -276,7 +284,7 @@ function renderChangeList(changes: readonly CriticMarkupChange[]): string {
   return changes.map(renderChangeCard).join('');
 }
 
-function renderChangeCard(change: CriticMarkupChange): string {
+function renderChangeCard(change: ReviewChange): string {
   const activeClass = change.changeIndex === activeChangeIndex ? ' active' : '';
   return `<section class="change-card${activeClass}" data-suggestion-index="${change.changeIndex}" data-testid="suggestion-card" tabindex="0">
     <div>
@@ -290,79 +298,115 @@ function renderChangeCard(change: CriticMarkupChange): string {
   </section>`;
 }
 
-function renderNodes(nodes: readonly CriticMarkupNode[], viewMode: ViewMode): string {
-  if (nodes.length === 0) {
+function renderReviewModel(model: ReviewModel, viewMode: ViewMode): string {
+  if (model.text.length === 0) {
     return '<p class="empty">No content</p>';
   }
 
-  let changeIndex = 0;
+  const boundaries = modelBoundaries(model);
   let html = '';
-  for (let index = 0; index < nodes.length; index += 1) {
-    const node = nodes[index];
-    if (node === undefined) {
+  for (let index = 0; index < boundaries.length; index += 1) {
+    const start = boundaries[index];
+    const end = boundaries[index + 1];
+    if (start === undefined) {
       continue;
     }
 
-    const nextNode = nodes[index + 1];
-    if (node.type === 'highlight' && nextNode?.type === 'comment') {
-      html += renderRangeComment(node.value, nextNode.value);
-      index += 1;
+    html += renderPointCommentsAt(model, start);
+    if (end === undefined || end === start) {
       continue;
     }
 
-    html += renderNode(node, viewMode, changeIndex);
-    if (isChangeNode(node)) {
-      changeIndex += 1;
-    }
+    html += renderTextSegment(model, {start, end});
   }
   return html;
 }
 
-function renderNode(
-  node: CriticMarkupNode,
-  viewMode: ViewMode,
-  changeIndex: number,
-): string {
-  switch (node.type) {
-    case 'text':
-      return markdownInlineToHtml(node.value);
-    case 'addition':
-      if (viewMode === 'reject') {
-        return '';
-      }
-      if (viewMode === 'accept') {
-        return markdownInlineToHtml(node.value);
-      }
-      return `<ins class="review-change review-addition" data-change-index="${changeIndex}" data-change-kind="addition" contenteditable="false" tabindex="0">${markdownInlineToHtml(node.value)}</ins>`;
-    case 'deletion':
-      if (viewMode === 'accept') {
-        return '';
-      }
-      if (viewMode === 'reject') {
-        return markdownInlineToHtml(node.value);
-      }
-      return `<del class="review-change review-deletion" data-change-index="${changeIndex}" data-change-kind="deletion" contenteditable="false" tabindex="0">${markdownInlineToHtml(node.value)}</del>`;
-    case 'substitution':
-      if (viewMode === 'accept') {
-        return markdownInlineToHtml(node.newValue);
-      }
-      if (viewMode === 'reject') {
-        return markdownInlineToHtml(node.oldValue);
-      }
-      return `<del class="review-change review-deletion" data-change-index="${changeIndex}" data-change-kind="substitution" data-change-part="old" contenteditable="false" tabindex="0">${markdownInlineToHtml(
-        node.oldValue,
-      )}</del><ins class="review-change review-addition" data-change-index="${changeIndex}" data-change-kind="substitution" data-change-part="new" contenteditable="false" tabindex="0">${markdownInlineToHtml(
-        node.newValue,
-      )}</ins>`;
-    case 'comment':
-      return renderCommentAnchor(node.value);
-    case 'highlight':
-      return renderHighlight(node.value);
+function modelBoundaries(model: ReviewModel): number[] {
+  const boundaries = new Set<number>([0, model.text.length]);
+  for (const suggestion of model.suggestions) {
+    addRangeBoundaries(boundaries, suggestion.oldRange);
+    addRangeBoundaries(boundaries, suggestion.newRange);
   }
-  return assertNever(node);
+  for (const comment of model.comments) {
+    boundaries.add(comment.start);
+    boundaries.add(comment.end);
+  }
+  for (const highlight of model.highlights) {
+    boundaries.add(highlight.start);
+    boundaries.add(highlight.end);
+  }
+  return Array.from(boundaries).sort((left, right) => left - right);
 }
 
-function describeChange(change: CriticMarkupChange): string {
+function addRangeBoundaries(boundaries: Set<number>, range: ReviewRange | undefined): void {
+  if (range === undefined) {
+    return;
+  }
+  boundaries.add(range.start);
+  boundaries.add(range.end);
+}
+
+function renderTextSegment(model: ReviewModel, range: ReviewRange): string {
+  const value = markdownInlineToHtml(model.text.slice(range.start, range.end));
+  const suggestionPart = suggestionPartForRange(model, range);
+  const comment = model.comments.find(
+    item => item.start !== item.end && item.start <= range.start && item.end >= range.end,
+  );
+  const highlight = model.highlights.find(
+    item => item.start <= range.start && item.end >= range.end,
+  );
+
+  if (suggestionPart !== null) {
+    const changeIndex = model.suggestions.findIndex(
+      suggestion => suggestion.id === suggestionPart.suggestion.id,
+    );
+    const tag = suggestionPart.part === 'new' ? 'ins' : 'del';
+    const className = suggestionPart.part === 'new'
+      ? 'review-change review-addition'
+      : 'review-change review-deletion';
+    const commentAttributes = comment === undefined ? '' : commentDataAttributes(comment);
+    return `<${tag} class="${className}" data-suggestion-id="${suggestionPart.suggestion.id}" data-suggestion-part="${suggestionPart.part}" data-change-index="${changeIndex}" data-change-kind="${suggestionPart.suggestion.type}"${commentAttributes} tabindex="0">${value}</${tag}>`;
+  }
+
+  if (comment !== undefined) {
+    return `<mark ${commentDataAttributes(comment).trim()} data-testid="range-comment" tabindex="0">${value}</mark>`;
+  }
+
+  if (highlight !== undefined) {
+    return `<mark data-highlight-id="${highlight.id}">${value}</mark>`;
+  }
+
+  return value;
+}
+
+function suggestionPartForRange(
+  model: ReviewModel,
+  range: ReviewRange,
+): {part: 'new' | 'old'; suggestion: ReviewSuggestion} | null {
+  for (const suggestion of model.suggestions) {
+    if (rangeContains(suggestion.oldRange, range)) {
+      return {part: 'old', suggestion};
+    }
+    if (rangeContains(suggestion.newRange, range)) {
+      return {part: 'new', suggestion};
+    }
+  }
+  return null;
+}
+
+function rangeContains(container: ReviewRange | undefined, range: ReviewRange): boolean {
+  return container !== undefined && container.start <= range.start && container.end >= range.end;
+}
+
+function renderPointCommentsAt(model: ReviewModel, offset: number): string {
+  return model.comments
+    .filter(comment => comment.start === offset && comment.end === offset)
+    .map(renderCommentAnchor)
+    .join('');
+}
+
+function describeChange(change: ReviewChange): string {
   switch (change.type) {
     case 'addition':
       return `<q>${markdownInlineToHtml(change.newValue)}</q> added`;
@@ -374,25 +418,16 @@ function describeChange(change: CriticMarkupChange): string {
   return '';
 }
 
-function renderCommentAnchor(value: string): string {
-  const comment = escapeHtml(value);
-  return `<button type="button" class="comment-anchor" data-critic-type="comment" data-comment-value="${comment}" data-testid="comment-anchor" contenteditable="false" aria-label="Show comment">${commentIconSvg()}</button>`;
-}
-
-function renderRangeComment(value: string, commentValue: string): string {
-  return `<mark data-critic-type="highlight" data-comment-value="${escapeHtml(commentValue)}" data-testid="range-comment" tabindex="0">${markdownInlineToHtml(value)}</mark>`;
-}
-
-function renderHighlight(value: string): string {
-  return `<mark data-critic-type="highlight">${markdownInlineToHtml(value)}</mark>`;
+function renderCommentAnchor(comment: ReviewComment): string {
+  return `<button type="button" class="comment-anchor" data-comment-id="${comment.id}" data-comment-value="${escapeHtml(comment.value)}" data-testid="comment-anchor" contenteditable="false" aria-label="Show comment">${commentIconSvg()}</button>`;
 }
 
 function commentIconSvg(): string {
   return `<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 5h14v10H8l-3 3V5Z"></path></svg>`;
 }
 
-function isChangeNode(node: CriticMarkupNode): boolean {
-  return node.type === 'addition' || node.type === 'deletion' || node.type === 'substitution';
+function commentDataAttributes(comment: ReviewComment): string {
+  return ` data-comment-id="${comment.id}" data-comment-value="${escapeHtml(comment.value)}"`;
 }
 
 function showInlineActions(changeElement: HTMLElement): void {
@@ -444,16 +479,22 @@ function applyRenderedEditAsSuggestion(): void {
     return;
   }
 
-  const baseline = editBaselineCriticMarkup || editorOutput.value;
-  const editedCriticMarkup = renderedReviewToCriticMarkup(renderedReview, activeViewMode);
-  editorOutput.value = beforeAfterToCriticMarkup(baseline, editedCriticMarkup);
+  const domModel = renderedDomToReviewModel(renderedReview, editBaselineModel);
+  const nextModel = reconcileRenderedEdit(editBaselineModel, domModel);
+  const shouldRerenderEditor = nextModel !== domModel;
+  editorModel = nextModel;
   activeChangeIndex = null;
-  editBaselineCriticMarkup = editorOutput.value;
+  editBaselineModel = cloneReviewModel(editorModel);
   hideInlineActions();
   hideCommentPopover();
   hideCommentDisplay();
-  renderEditorOutput();
-  statusPill.textContent = 'Suggestion added';
+  if (shouldRerenderEditor) {
+    renderEditorOutput();
+    statusPill.textContent = 'Suggestion added';
+  } else {
+    refreshDerivedPanels();
+    statusPill.textContent = 'Suggestion updated';
+  }
 }
 
 function showCommentPopover(clientX: number, clientY: number): void {
@@ -517,7 +558,7 @@ function addCommentFromSelection(): void {
   } else {
     const selectedFragment = range.extractContents();
     const mark = document.createElement('mark');
-    mark.dataset.criticType = 'highlight';
+    mark.dataset.commentId = nextAnnotationId(editorModel);
     mark.dataset.commentValue = comment;
     mark.dataset.testid = 'range-comment';
     mark.tabIndex = 0;
@@ -526,9 +567,9 @@ function addCommentFromSelection(): void {
   }
 
   window.getSelection()?.removeAllRanges();
-  editorOutput.value = renderedReviewToCriticMarkup(renderedReview, activeViewMode);
+  editorModel = renderedDomToReviewModel(renderedReview, editorModel);
   activeChangeIndex = null;
-  editBaselineCriticMarkup = editorOutput.value;
+  editBaselineModel = cloneReviewModel(editorModel);
   hideCommentPopover();
   hideCommentDisplay();
   renderEditorOutput();
@@ -539,7 +580,7 @@ function createCommentElement(comment: string): HTMLElement {
   const element = document.createElement('button');
   element.type = 'button';
   element.className = 'comment-anchor';
-  element.dataset.criticType = 'comment';
+  element.dataset.commentId = nextAnnotationId(editorModel);
   element.dataset.commentValue = comment;
   element.setAttribute('aria-label', 'Show comment');
   element.contentEditable = 'false';
@@ -574,170 +615,288 @@ function hideToolbarPopover(popover: HTMLElement, trigger: HTMLButtonElement): v
   trigger.setAttribute('aria-expanded', 'false');
 }
 
-function renderedReviewToCriticMarkup(root: HTMLElement, viewMode: ViewMode): string {
-  if (viewMode !== 'revisions') {
-    return serializeCriticMarkup([{type: 'text', value: childNodesToMarkdown(root.childNodes)}]);
+function renderedDomToReviewModel(root: HTMLElement, baseline: ReviewModel): ReviewModel {
+  const suggestions = new Map<string, MutableSuggestion>();
+  const comments = new Map<string, ReviewComment>();
+  const highlights = new Map<string, ReviewHighlight>();
+  let text = '';
+
+  for (const suggestion of baseline.suggestions) {
+    suggestions.set(suggestion.id, {
+      id: suggestion.id,
+      type: suggestion.type,
+    });
   }
 
-  return childNodesToCriticMarkup(root.childNodes);
-}
+  const appendText = (value: string): ReviewRange => {
+    const start = text.length;
+    text += value;
+    return {end: text.length, start};
+  };
 
-function childNodesToCriticMarkup(nodes: NodeListOf<ChildNode>): string {
-  const childNodes = Array.from(nodes);
-  let output = '';
+  const appendChildren = (node: Node): void => {
+    for (const child of Array.from(node.childNodes)) {
+      appendNode(child);
+    }
+  };
 
-  for (let index = 0; index < childNodes.length; index += 1) {
-    const node = childNodes[index];
-    if (node === undefined) {
-      continue;
+  const appendNode = (node: Node): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      appendText(node.nodeValue ?? '');
+      return;
     }
 
-    const element = node instanceof HTMLElement ? node : null;
-    const changeKind = element?.dataset.changeKind;
-
-    if (element !== null && changeKind === 'addition') {
-      output += serializeCriticMarkup([
-        {type: 'addition', value: childNodesToMarkdown(element.childNodes)},
-      ]);
-      continue;
-    }
-
-    if (element !== null && changeKind === 'deletion') {
-      output += serializeCriticMarkup([
-        {type: 'deletion', value: childNodesToMarkdown(element.childNodes)},
-      ]);
-      continue;
-    }
-
-    if (element !== null && changeKind === 'substitution') {
-      const substitution = collectSubstitutionParts(childNodes, index);
-      output += serializeCriticMarkup([
-        {
-          type: 'substitution',
-          oldValue: substitution.oldValue,
-          newValue: substitution.newValue,
-        },
-      ]);
-      index = substitution.endIndex;
-      continue;
-    }
-
-    if (element?.dataset.criticType === 'comment') {
-      output += serializeCriticMarkup([{type: 'comment', value: commentElementValue(element)}]);
-      continue;
-    }
-
-    if (element?.dataset.criticType === 'highlight') {
-      output += serializeCriticMarkup([
-        {type: 'highlight', value: childNodesToMarkdown(element.childNodes)},
-      ]);
-      if (element.dataset.commentValue !== undefined) {
-        output += serializeCriticMarkup([
-          {type: 'comment', value: commentElementValue(element)},
-        ]);
-      }
-      continue;
-    }
-
-    output += serializeCriticMarkup([{type: 'text', value: nodeToMarkdown(node)}]);
-  }
-
-  return output;
-}
-
-function collectSubstitutionParts(
-  nodes: readonly Node[],
-  startIndex: number,
-): {endIndex: number; newValue: string; oldValue: string} {
-  const firstElement = nodes[startIndex];
-  if (!(firstElement instanceof HTMLElement)) {
-    return {endIndex: startIndex, newValue: '', oldValue: ''};
-  }
-
-  const changeIndex = firstElement.dataset.changeIndex;
-  let endIndex = startIndex;
-  let oldValue = '';
-  let newValue = '';
-
-  for (let index = startIndex; index < nodes.length; index += 1) {
-    const node = nodes[index];
     if (!(node instanceof HTMLElement)) {
-      break;
-    }
-    if (
-      node.dataset.changeKind !== 'substitution' ||
-      node.dataset.changeIndex !== changeIndex
-    ) {
-      break;
+      return;
     }
 
-    const markdown = childNodesToMarkdown(node.childNodes);
-    if (node.dataset.changePart === 'old') {
-      oldValue += markdown;
+    if (node.matches('.comment-anchor')) {
+      const id = node.dataset.commentId ?? nextAnnotationId({comments: Array.from(comments.values())});
+      comments.set(id, {
+        end: text.length,
+        id,
+        start: text.length,
+        value: node.dataset.commentValue ?? '',
+      });
+      return;
+    }
+
+    if (node.tagName === 'BR') {
+      appendText('\n');
+      return;
+    }
+
+    const start = text.length;
+    if (node.tagName === 'STRONG' || node.tagName === 'B') {
+      appendText('**');
+      appendChildren(node);
+      appendText('**');
+    } else if (node.tagName === 'CODE') {
+      appendText('`');
+      appendChildren(node);
+      appendText('`');
     } else {
-      newValue += markdown;
+      appendChildren(node);
+      if (node.tagName === 'DIV' || node.tagName === 'P') {
+        appendText('\n');
+      }
     }
-    endIndex = index;
-  }
-
-  return {endIndex, newValue, oldValue};
-}
-
-function childNodesToMarkdown(nodes: NodeListOf<ChildNode>): string {
-  return Array.from(nodes)
-    .map(nodeToMarkdown)
-    .join('');
-}
-
-function nodeToMarkdown(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) {
-    return node.nodeValue ?? '';
-  }
-
-  if (!(node instanceof HTMLElement)) {
-    return '';
-  }
-
-  switch (node.tagName) {
-    case 'B':
-    case 'STRONG':
-      return `**${childNodesToMarkdown(node.childNodes)}**`;
-    case 'BR':
-      return '\n';
-    case 'CODE':
-      return `\`${childNodesToMarkdown(node.childNodes)}\``;
-    case 'DIV':
-    case 'P': {
-      const value = childNodesToMarkdown(node.childNodes);
-      return value.endsWith('\n') ? value : `${value}\n`;
+    const end = text.length;
+    if (end === start) {
+      return;
     }
-    default:
-      return childNodesToMarkdown(node.childNodes);
+
+    const suggestionId = node.dataset.suggestionId;
+    const suggestionPart = node.dataset.suggestionPart;
+    if (suggestionId !== undefined && (suggestionPart === 'old' || suggestionPart === 'new')) {
+      const baselineSuggestion = baseline.suggestions.find(suggestion => suggestion.id === suggestionId);
+      const suggestion = suggestions.get(suggestionId) ?? {
+        id: suggestionId,
+        type: baselineSuggestion?.type ?? (suggestionPart === 'new' ? 'addition' : 'deletion'),
+      };
+      mergeSuggestionRange(suggestion, suggestionPart, {start, end});
+      suggestions.set(suggestionId, suggestion);
+    }
+
+    const commentId = node.dataset.commentId;
+    if (commentId !== undefined) {
+      comments.set(commentId, {
+        end,
+        id: commentId,
+        start,
+        value: node.dataset.commentValue ?? '',
+      });
+    }
+
+    const highlightId = node.dataset.highlightId;
+    if (highlightId !== undefined) {
+      highlights.set(highlightId, {end, id: highlightId, start});
+    }
+  };
+
+  appendChildren(root);
+  return {
+    comments: Array.from(comments.values()).sort(compareRanges),
+    highlights: Array.from(highlights.values()).sort(compareRanges),
+    suggestions: Array.from(suggestions.values())
+      .filter(hasSuggestionRange)
+      .map(toReviewSuggestion)
+      .sort((left, right) => suggestionModelStart(left) - suggestionModelStart(right)),
+    text,
+  };
+}
+
+function reconcileRenderedEdit(baseline: ReviewModel, domModel: ReviewModel): ReviewModel {
+  const diff = textDiff(baseline.text, domModel.text);
+  if (diff.oldValue === '' && diff.newValue === '') {
+    return domModel;
   }
+
+  const oldRange = {start: diff.start, end: diff.start + diff.oldValue.length};
+  const newRange = {start: diff.start, end: diff.start + diff.newValue.length};
+  if (
+    rangeTouchesSuggestion(baseline, oldRange) ||
+    rangeTouchesSuggestion(domModel, newRange)
+  ) {
+    return domModel;
+  }
+
+  if (diff.oldValue === '') {
+    return withAddedSuggestion(domModel, {
+      newRange,
+      type: 'addition',
+    });
+  }
+
+  if (diff.newValue === '') {
+    return withAddedSuggestion(baseline, {
+      oldRange,
+      type: 'deletion',
+    });
+  }
+
+  const expanded = insertReviewText(domModel, diff.start, diff.oldValue);
+  return withAddedSuggestion(expanded, {
+    newRange: {
+      end: diff.start + diff.oldValue.length + diff.newValue.length,
+      start: diff.start + diff.oldValue.length,
+    },
+    oldRange,
+    type: 'substitution',
+  });
 }
 
-function commentElementValue(element: HTMLElement): string {
-  return element.dataset.commentValue ?? element.textContent?.replace(/^Comment:\s*/, '') ?? '';
+function modelForView(model: ReviewModel, viewMode: ViewMode): ReviewModel {
+  if (viewMode === 'revisions') {
+    return model;
+  }
+
+  let nextModel = cloneReviewModel(model);
+  const decision = viewMode === 'accept' ? 'accept' : 'reject';
+  for (let index = nextModel.suggestions.length - 1; index >= 0; index -= 1) {
+    nextModel = resolveReviewModelChange(nextModel, index, decision);
+  }
+  return nextModel;
 }
 
-function renderMetrics(nodes: readonly CriticMarkupNode[]): string {
-  const counts: Record<Exclude<CriticMarkupNode['type'], 'text'>, number> = {
+function renderMetrics(model: ReviewModel): string {
+  const counts = {
     addition: 0,
-    comment: 0,
+    comment: model.comments.length,
     deletion: 0,
-    highlight: 0,
+    highlight: model.highlights.length,
     substitution: 0,
   };
 
-  for (const node of nodes) {
-    if (node.type !== 'text') {
-      counts[node.type] += 1;
-    }
+  for (const suggestion of model.suggestions) {
+    counts[suggestion.type] += 1;
   }
 
   return Object.entries(counts)
     .map(([label, value]) => `<span><strong>${value}</strong>${label}</span>`)
     .join('');
+}
+
+function textDiff(before: string, after: string): {newValue: string; oldValue: string; start: number} {
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) {
+    start += 1;
+  }
+
+  let beforeEnd = before.length;
+  let afterEnd = after.length;
+  while (
+    beforeEnd > start &&
+    afterEnd > start &&
+    before[beforeEnd - 1] === after[afterEnd - 1]
+  ) {
+    beforeEnd -= 1;
+    afterEnd -= 1;
+  }
+
+  return {
+    newValue: after.slice(start, afterEnd),
+    oldValue: before.slice(start, beforeEnd),
+    start,
+  };
+}
+
+function rangeTouchesSuggestion(model: ReviewModel, range: ReviewRange): boolean {
+  if (range.start === range.end) {
+    return false;
+  }
+  return model.suggestions.some(suggestion =>
+    rangesIntersect(range, suggestion.oldRange) || rangesIntersect(range, suggestion.newRange),
+  );
+}
+
+function rangesIntersect(left: ReviewRange, right: ReviewRange | undefined): boolean {
+  return right !== undefined && left.start < right.end && right.start < left.end;
+}
+
+function nextAnnotationId(model: {readonly comments: readonly ReviewComment[]}): string {
+  return `c-local-${model.comments.length + 1}-${Date.now()}`;
+}
+
+type MutableSuggestion = {
+  id: string;
+  newRange?: ReviewRange;
+  oldRange?: ReviewRange;
+  type: ReviewSuggestion['type'];
+};
+
+function mergeSuggestionRange(
+  suggestion: MutableSuggestion,
+  part: 'new' | 'old',
+  range: ReviewRange,
+): void {
+  const key = part === 'new' ? 'newRange' : 'oldRange';
+  const current = suggestion[key];
+  suggestion[key] = current === undefined
+    ? range
+    : {end: Math.max(current.end, range.end), start: Math.min(current.start, range.start)};
+}
+
+function hasSuggestionRange(suggestion: MutableSuggestion): boolean {
+  return suggestion.oldRange !== undefined || suggestion.newRange !== undefined;
+}
+
+function toReviewSuggestion(suggestion: MutableSuggestion): ReviewSuggestion {
+  const next: ReviewSuggestion = {
+    id: suggestion.id,
+    type: suggestion.type,
+  };
+  if (suggestion.oldRange !== undefined && suggestion.newRange !== undefined) {
+    return {...next, newRange: suggestion.newRange, oldRange: suggestion.oldRange};
+  }
+  if (suggestion.oldRange !== undefined) {
+    return {...next, oldRange: suggestion.oldRange};
+  }
+  return suggestion.newRange === undefined ? next : {...next, newRange: suggestion.newRange};
+}
+
+function compareRanges(left: ReviewRange, right: ReviewRange): number {
+  return left.start - right.start || left.end - right.end;
+}
+
+function suggestionModelStart(suggestion: ReviewSuggestion): number {
+  return Math.min(
+    suggestion.oldRange?.start ?? Number.POSITIVE_INFINITY,
+    suggestion.newRange?.start ?? Number.POSITIVE_INFINITY,
+  );
+}
+
+function cloneReviewModel(model: ReviewModel): ReviewModel {
+  return {
+    comments: model.comments.map(comment => ({...comment})),
+    highlights: model.highlights.map(highlight => ({...highlight})),
+    suggestions: model.suggestions.map(suggestion => ({...suggestion})),
+    text: model.text,
+  };
+}
+
+function emptyReviewModel(): ReviewModel {
+  return {comments: [], highlights: [], suggestions: [], text: ''};
 }
 
 function markdownInlineToHtml(value: string): string {
