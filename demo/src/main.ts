@@ -21,6 +21,7 @@ import {
   type ReviewLexicalAdapter,
   type ReviewMarkdownFormatAction,
   type ReviewMarkdownFormatCommand,
+  type ReviewRichBlockFormat,
 } from './review-lexical';
 
 type ViewMode = 'accept' | 'reject' | 'revisions';
@@ -347,6 +348,7 @@ function applyMarkdownFormat(button: HTMLButtonElement): void {
   }
 
   const placeholder = button.dataset.formatPlaceholder;
+  const richBlock = button.dataset.richBlock as ReviewRichBlockFormat | undefined;
   const richFormat = button.dataset.richFormat as ReviewMarkdownFormatCommand['richFormat'];
   const command: ReviewMarkdownFormatCommand = {
     action: (button.dataset.formatAction ?? 'inline') as ReviewMarkdownFormatAction,
@@ -354,6 +356,7 @@ function applyMarkdownFormat(button: HTMLButtonElement): void {
     prefix,
     suffix,
     ...(placeholder === undefined ? {} : {placeholder}),
+    ...(richBlock === undefined ? {} : {richBlock}),
     ...(richFormat === undefined ? {} : {richFormat}),
   };
   reviewEditor.applyMarkdownFormat(command);
@@ -671,7 +674,8 @@ function reconcileRenderedEdit(baseline: ReviewModel, domModel: ReviewModel): Re
   }
 
   if (diff.oldValue === '') {
-    return withAddedSuggestion(domModel, {
+    const expanded = insertReviewText(baseline, diff.start, diff.newValue);
+    return withAddedSuggestion(expanded, {
       newRange,
       type: 'addition',
     });
@@ -684,7 +688,11 @@ function reconcileRenderedEdit(baseline: ReviewModel, domModel: ReviewModel): Re
     });
   }
 
-  const expanded = insertReviewText(domModel, diff.start, diff.oldValue);
+  const expanded = insertReviewText(
+    baseline,
+    diff.start + diff.oldValue.length,
+    diff.newValue,
+  );
   return withAddedSuggestion(expanded, {
     newRange: {
       end: diff.start + diff.oldValue.length + diff.newValue.length,

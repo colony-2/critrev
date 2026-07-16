@@ -52,7 +52,7 @@ test('shows each CriticMarkup pipeline stage', async ({page}) => {
 test('renders revisions with Google Docs-style inline marks only', async ({page}) => {
   await page.goto('/');
 
-  const additionStyle = await page.locator('.rendered-review ins').first().evaluate(element => {
+  const additionStyle = await page.locator('.rendered-review .review-addition').first().evaluate(element => {
     const style = getComputedStyle(element);
     return {
       backgroundColor: style.backgroundColor,
@@ -61,7 +61,7 @@ test('renders revisions with Google Docs-style inline marks only', async ({page}
       textDecorationLine: style.textDecorationLine,
     };
   });
-  const deletionStyle = await page.locator('.rendered-review del').first().evaluate(element => {
+  const deletionStyle = await page.locator('.rendered-review .review-deletion').first().evaluate(element => {
     const style = getComputedStyle(element);
     return {
       backgroundColor: style.backgroundColor,
@@ -128,12 +128,50 @@ test('switches rendered content between WYSIWYG and source text modes', async ({
   await page.getByRole('button', {name: 'Text'}).click();
   await expect(page.getByRole('button', {name: 'Text'})).toHaveClass(/active/);
   await expect(renderedReview).toContainText('**great** for us');
-  await expect(renderedReview.locator('ins').first()).toContainText('**great** for us');
+  await expect(renderedReview.locator('.review-addition').first()).toContainText('**great** for us');
 
   await page.getByRole('button', {name: 'WYSIWYG'}).click();
   await expect(page.getByRole('button', {name: 'WYSIWYG'})).toHaveClass(/active/);
   await expect(renderedReview).toContainText('great for us');
   await expect(renderedReview).not.toContainText('**great**');
+});
+
+test('renders common markdown as rich WYSIWYG nodes instead of syntax text', async ({page}) => {
+  await page.goto('/');
+
+  await page.getByTestId('critic-input').fill([
+    '# Heading',
+    '',
+    'Paragraph with **bold** and *italic* and [link](https://example.com).',
+    '',
+    '- item',
+    '',
+    '```js',
+    'const x = 1;',
+    '```',
+    '',
+    '![diagram](https://example.com/diagram.png)',
+    '',
+    '---',
+  ].join('\n'));
+  await page.getByRole('button', {name: 'Load'}).click();
+
+  const renderedReview = page.getByTestId('rendered-review');
+  await expect(renderedReview.locator('h1')).toHaveText('Heading');
+  await expect(renderedReview.locator('strong')).toHaveText('bold');
+  await expect(renderedReview.locator('em')).toHaveText('italic');
+  await expect(renderedReview.locator('a[href="https://example.com"]')).toHaveText('link');
+  await expect(renderedReview.locator('li')).toHaveText('item');
+  await expect(renderedReview.locator('code[data-language="js"]')).toContainText('const x = 1;');
+  await expect(renderedReview.locator('.review-image')).toContainText('diagram');
+  await expect(renderedReview.locator('hr')).toHaveCount(1);
+  await expect(renderedReview).not.toContainText('**bold**');
+  await expect(renderedReview).not.toContainText('[link](https://example.com)');
+  await expect(renderedReview).not.toContainText('```');
+
+  await page.getByRole('button', {name: 'Text'}).click();
+  await expect(renderedReview).toContainText('# Heading');
+  await expect(renderedReview).toContainText('**bold**');
 });
 
 test('rendered review edits become suggestions instead of hard changes', async ({page}) => {
@@ -165,7 +203,7 @@ test('typing in unchanged text keeps the caret at the insertion point', async ({
     sampleEditorMarkup.replace('this ', 'th{++XYZ++}is '),
   );
   await expect(page.getByTestId('rendered-review')).not.toContainText('{++');
-  await expect(page.getByTestId('rendered-review').locator('ins').filter({hasText: 'XYZ'})).toHaveCount(1);
+  await expect(page.getByTestId('rendered-review').locator('.review-addition').filter({hasText: 'XYZ'})).toHaveCount(1);
   expect(await renderedCaretOffset(page)).toBe(5);
 });
 
@@ -214,7 +252,7 @@ test('backspacing unchanged text creates a deletion without moving the caret to 
 
   await expect(page.getByTestId('critic-output')).toHaveValue('Plai{--n--} text');
   await expect(page.getByTestId('rendered-review')).not.toContainText('{--');
-  await expect(page.getByTestId('rendered-review').locator('del')).toContainText('n');
+  await expect(page.getByTestId('rendered-review').locator('.review-deletion')).toContainText('n');
   expect(await renderedCaretOffset(page)).toBe(4);
 });
 
@@ -228,7 +266,7 @@ test('typing inside an existing addition extends that suggestion', async ({page}
   await page.keyboard.type('bc');
 
   await expect(page.getByTestId('critic-output')).toHaveValue('Plain {++abcd++}');
-  await expect(page.getByTestId('rendered-review').locator('ins')).toHaveText('abcd');
+  await expect(page.getByTestId('rendered-review').locator('.review-addition')).toHaveText('abcd');
   expect(await renderedCaretOffset(page)).toBe(9);
 });
 
@@ -243,7 +281,7 @@ test('editing inside an existing addition keeps it editable as one suggestion', 
 
   await expect(page.getByTestId('critic-output')).toHaveValue('Plain {++acd++}');
   await expect(page.getByTestId('rendered-review')).not.toContainText('{++');
-  await expect(page.getByTestId('rendered-review').locator('ins')).toContainText('acd');
+  await expect(page.getByTestId('rendered-review').locator('.review-addition')).toContainText('acd');
   await expect(page.locator('.change-description')).toContainText('acd added');
 });
 
@@ -258,7 +296,7 @@ test('editing inside an existing deletion keeps it editable as one suggestion', 
 
   await expect(page.getByTestId('critic-output')).toHaveValue('Plain {--acd--}');
   await expect(page.getByTestId('rendered-review')).not.toContainText('{--');
-  await expect(page.getByTestId('rendered-review').locator('del')).toContainText('acd');
+  await expect(page.getByTestId('rendered-review').locator('.review-deletion')).toContainText('acd');
   await expect(page.locator('.change-description')).toContainText('acd deleted');
 });
 
