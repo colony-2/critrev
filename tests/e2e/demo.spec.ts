@@ -369,17 +369,45 @@ test('hovering range comments and point comment icons opens comment overlays', a
   await expect(page.getByTestId('comment-display')).toBeHidden();
 });
 
+test('changes pane lists comments alongside suggestions and deletes comments', async ({page}) => {
+  await page.goto('/');
+
+  const reviewItems = page.locator('[data-testid="suggestion-card"], [data-testid="comment-card"]');
+  await expect(reviewItems).toHaveCount(4);
+  await expect(reviewItems.nth(0)).toContainText('substitution');
+  await expect(reviewItems.nth(1)).toContainText(sampleRangeComment);
+  await expect(reviewItems.nth(2)).toContainText('substitution');
+  await expect(reviewItems.nth(3)).toContainText(samplePointComment);
+
+  const pointCommentCard = page.getByTestId('comment-card').filter({hasText: samplePointComment});
+  await expect(pointCommentCard).toContainText('Point comment');
+
+  page.once('dialog', async dialog => {
+    expect(dialog.message()).toContain('Delete this comment');
+    await dialog.accept();
+  });
+  await pointCommentCard.getByTestId('delete-comment-card').click();
+
+  await expect(page.getByTestId('comment-card')).toHaveCount(1);
+  await expect(page.getByTestId('comment-anchor')).toHaveCount(0);
+  await expect(page.getByTestId('range-comment')).toHaveCount(1);
+  expect(await page.getByTestId('critic-output').inputValue()).not.toContain(samplePointComment);
+  expect(await page.getByTestId('final-output').inputValue()).not.toContain(samplePointComment);
+});
+
 test('view menu hides and shows comments independently from revision previews', async ({page}) => {
   await page.goto('/');
 
   await expect(page.getByTestId('range-comment')).toHaveCount(1);
   await expect(page.getByTestId('comment-anchor')).toHaveCount(1);
+  await expect(page.getByTestId('comment-card')).toHaveCount(2);
 
   await page.getByTestId('view-mode-toggle').click();
   await page.getByTestId('comments-toggle').uncheck();
 
   await expect(page.getByTestId('range-comment')).toHaveCount(0);
   await expect(page.getByTestId('comment-anchor')).toHaveCount(0);
+  await expect(page.getByTestId('comment-card')).toHaveCount(2);
   await expect(page.getByTestId('critic-output')).toHaveValue(sampleEditorMarkup);
   expect(await page.getByTestId('final-output').inputValue()).toContain(sampleRangeComment);
   expect(await page.getByTestId('final-output').inputValue()).toContain(samplePointComment);
@@ -410,6 +438,7 @@ test('deletes comments from the comment overlay after confirmation', async ({pag
 
   await expect(page.getByTestId('range-comment')).toHaveCount(0);
   await expect(page.getByTestId('comment-anchor')).toHaveCount(1);
+  await expect(page.getByTestId('comment-card')).toHaveCount(1);
   expect(await page.getByTestId('critic-output').inputValue()).not.toContain(sampleRangeComment);
   expect(await page.getByTestId('final-output').inputValue()).not.toContain(sampleRangeComment);
   await expect(page.getByTestId('clean-output')).toHaveValue(

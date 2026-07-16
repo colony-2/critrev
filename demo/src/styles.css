@@ -496,6 +496,10 @@ mark[data-comment-value],
   box-shadow: 0 0 0 1px #2f6fed;
 }
 
+.active-review-comment {
+  box-shadow: 0 0 0 1px #d6a500;
+}
+
 .comment-anchor {
   display: inline-grid;
   width: 18px;

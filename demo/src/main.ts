@@ -25,6 +25,19 @@ import {
 } from './review-lexical';
 
 type ViewMode = 'accept' | 'reject' | 'revisions';
+type ChangeListItem =
+  | {
+      readonly change: ReviewChange;
+      readonly kind: 'change';
+      readonly sortEnd: number;
+      readonly sortStart: number;
+    }
+  | {
+      readonly comment: ReviewComment;
+      readonly kind: 'comment';
+      readonly sortEnd: number;
+      readonly sortStart: number;
+    };
 
 const sampleBefore = 'this is **a great idea** for us.\n\nPlease ship the first draft.';
 const sampleAfter = 'this **great** for us\n\nPlease ship the polished draft.';
@@ -131,11 +144,26 @@ for (const button of contentModeButtons) {
   });
 }
 changeList.addEventListener('click', event => {
-  const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+  const target = event.target as HTMLElement;
+  const deleteCommentButton = target.closest<HTMLButtonElement>(
+    'button[data-comment-id][data-comment-action="delete"]',
+  );
+  if (deleteCommentButton !== null) {
+    deleteComment(deleteCommentButton.dataset.commentId ?? '');
+    return;
+  }
+
+  const button = target.closest<HTMLButtonElement>(
     'button[data-change-index][data-decision]',
   );
   if (button === null) {
-    const card = (event.target as HTMLElement).closest<HTMLElement>('[data-suggestion-index]');
+    const commentCard = target.closest<HTMLElement>('[data-comment-card-id]');
+    if (commentCard !== null) {
+      setActiveCommentId(commentCard.dataset.commentCardId ?? null);
+      return;
+    }
+
+    const card = target.closest<HTMLElement>('[data-suggestion-index]');
     if (card !== null) {
       setActiveChangeIndex(Number(card.dataset.suggestionIndex));
     }
@@ -147,7 +175,14 @@ changeList.addEventListener('click', event => {
   resolveChange(changeIndex, decision);
 });
 changeList.addEventListener('focusin', event => {
-  const card = (event.target as HTMLElement).closest<HTMLElement>('[data-suggestion-index]');
+  const target = event.target as HTMLElement;
+  const commentCard = target.closest<HTMLElement>('[data-comment-card-id]');
+  if (commentCard !== null) {
+    setActiveCommentId(commentCard.dataset.commentCardId ?? null);
+    return;
+  }
+
+  const card = target.closest<HTMLElement>('[data-suggestion-index]');
   if (card !== null) {
     setActiveChangeIndex(Number(card.dataset.suggestionIndex));
   }
@@ -313,8 +348,8 @@ function refreshDerivedPanels(): void {
   finalOutput.value = finalizeReviewModel(editorModel);
   cleanOutput.value = finalizeReviewModel(editorModel, {preserveComments: false});
   metrics.innerHTML = renderMetrics(editorModel);
-  changeList.innerHTML = renderChangeList(listReviewChanges(editorModel));
-  syncActiveSuggestionState();
+  changeList.innerHTML = renderChangeList(editorModel, listReviewChanges(editorModel));
+  syncActiveReviewState();
   statusPill.textContent =
     editorOutput.value === editorInput.value
       ? 'Loaded'
@@ -334,12 +369,53 @@ function resolveChange(
   renderEditorOutput();
 }
 
-function renderChangeList(changes: readonly ReviewChange[]): string {
-  if (changes.length === 0) {
-    return '<p class="empty">No pending change markers</p>';
+function renderChangeList(model: ReviewModel, changes: readonly ReviewChange[]): string {
+  const items = buildChangeListItems(model, changes);
+  if (items.length === 0) {
+    return '<p class="empty">No pending changes or comments</p>';
   }
 
-  return changes.map(renderChangeCard).join('');
+  return items
+    .map(item => (item.kind === 'change' ? renderChangeCard(item.change) : renderCommentCard(model, item.comment)))
+    .join('');
+}
+
+function buildChangeListItems(
+  model: ReviewModel,
+  changes: readonly ReviewChange[],
+): ChangeListItem[] {
+  return [
+    ...changes.map(change => {
+      const suggestion = model.suggestions[change.changeIndex];
+      const range = suggestion === undefined
+        ? {end: change.changeIndex, start: change.changeIndex}
+        : suggestionRange(suggestion);
+      return {
+        change,
+        kind: 'change' as const,
+        sortEnd: range.end,
+        sortStart: range.start,
+      };
+    }),
+    ...model.comments.map(comment => ({
+      comment,
+      kind: 'comment' as const,
+      sortEnd: comment.end,
+      sortStart: comment.start,
+    })),
+  ].sort(compareChangeListItems);
+}
+
+function compareChangeListItems(left: ChangeListItem, right: ChangeListItem): number {
+  return (
+    left.sortStart - right.sortStart ||
+    left.sortEnd - right.sortEnd ||
+    itemSortRank(left) - itemSortRank(right)
+  );
+}
+
+function itemSortRank(item: ChangeListItem): number {
+  return item.kind === 'change' ? 0 : 1;
 }
 
 function renderChangeCard(change: ReviewChange): string {
@@ -352,6 +428,19 @@ function renderChangeCard(change: ReviewChange): string {
     <div class="change-actions">
       <button type="button" data-testid="accept-change" data-change-index="${change.changeIndex}" data-decision="accept">Accept</button>
       <button type="button" data-testid="reject-change" data-change-index="${change.changeIndex}" data-decision="reject">Reject</button>
+    </div>
+  </section>`;
+}
+
+function renderCommentCard(model: ReviewModel, comment: ReviewComment): string {
+  const activeClass = comment.id === activeCommentId ? ' active' : '';
+  return `<section class="change-card comment-card${activeClass}" data-comment-card-id="${escapeHtml(comment.id)}" data-testid="comment-card" tabindex="0">
+    <div>
+      <p class="change-type">comment</p>
+      <p class="change-description">${describeComment(model, comment)}</p>
+    </div>
+    <div class="change-actions">
+      <button type="button" data-testid="delete-comment-card" data-comment-id="${escapeHtml(comment.id)}" data-comment-action="delete">Delete</button>
     </div>
   </section>`;
 }
@@ -397,6 +486,16 @@ function describeChange(change: ReviewChange): string {
       return `<q>${markdownInlineToHtml(change.oldValue)}</q> changed to <q>${markdownInlineToHtml(change.newValue)}</q>`;
   }
   return '';
+}
+
+function describeComment(model: ReviewModel, comment: ReviewComment): string {
+  const value = escapeHtml(comment.value);
+  if (comment.start === comment.end) {
+    return `Point comment: ${value}`;
+  }
+
+  const context = markdownInlineToHtml(model.text.slice(comment.start, comment.end));
+  return `Comment on <q>${context}</q>: ${value}`;
 }
 
 function handleReviewHoverMove(event: PointerEvent): void {
@@ -517,10 +616,21 @@ function hideInlineActions(): void {
 
 function setActiveChangeIndex(changeIndex: number | null): void {
   activeChangeIndex = changeIndex === null || !Number.isFinite(changeIndex) ? null : changeIndex;
-  syncActiveSuggestionState();
+  if (activeChangeIndex !== null) {
+    activeCommentId = null;
+  }
+  syncActiveReviewState();
 }
 
-function syncActiveSuggestionState(): void {
+function setActiveCommentId(commentId: string | null): void {
+  activeCommentId = commentId;
+  if (activeCommentId !== null) {
+    activeChangeIndex = null;
+  }
+  syncActiveReviewState();
+}
+
+function syncActiveReviewState(): void {
   for (const card of changeList.querySelectorAll<HTMLElement>('[data-suggestion-index]')) {
     card.classList.toggle(
       'active',
@@ -533,6 +643,14 @@ function syncActiveSuggestionState(): void {
       'active-review-change',
       Number(change.dataset.changeIndex) === activeChangeIndex,
     );
+  }
+
+  for (const card of changeList.querySelectorAll<HTMLElement>('[data-comment-card-id]')) {
+    card.classList.toggle('active', card.dataset.commentCardId === activeCommentId);
+  }
+
+  for (const comment of renderedReview.querySelectorAll<HTMLElement>('[data-comment-id]')) {
+    comment.classList.toggle('active-review-comment', comment.dataset.commentId === activeCommentId);
   }
 }
 
@@ -614,9 +732,8 @@ function showCommentDisplay(commentAnchor: HTMLElement): void {
   }
   hideInlineActions();
   hideCommentPopover();
-  setActiveChangeIndex(null);
 
-  activeCommentId = commentId;
+  setActiveCommentId(commentId);
   commentDisplay.dataset.commentId = commentId;
   commentDisplayText.textContent = comment;
   commentDisplay.hidden = false;
@@ -632,7 +749,7 @@ function showCommentDisplay(commentAnchor: HTMLElement): void {
 
 function hideCommentDisplay(): void {
   commentDisplay.hidden = true;
-  activeCommentId = null;
+  setActiveCommentId(null);
   commentDisplay.removeAttribute('data-comment-id');
   commentDisplayText.textContent = '';
 }
@@ -782,6 +899,20 @@ function modelForEditorDisplay(model: ReviewModel, viewMode: ViewMode): ReviewMo
   return {
     ...visibleModel,
     comments: [],
+  };
+}
+
+function suggestionRange(suggestion: ReviewModel['suggestions'][number]): ReviewRange {
+  const ranges = [suggestion.oldRange, suggestion.newRange].filter(
+    (range): range is ReviewRange => range !== undefined,
+  );
+  if (ranges.length === 0) {
+    return {end: 0, start: 0};
+  }
+
+  return {
+    end: Math.max(...ranges.map(range => range.end)),
+    start: Math.min(...ranges.map(range => range.start)),
   };
 }
 
