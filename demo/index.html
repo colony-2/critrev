@@ -252,6 +252,10 @@
                     <button type="button" class="active" data-view-mode="revisions">Show revisions</button>
                     <button type="button" data-view-mode="reject">Preview reject all</button>
                     <button type="button" data-view-mode="accept">Preview accept all</button>
+                    <label class="menu-toggle" for="comments-toggle">
+                      <input id="comments-toggle" data-testid="comments-toggle" type="checkbox" checked />
+                      <span>Show comments</span>
+                    </label>
                   </div>
                 </div>
                 <div class="toolbar-menu">
@@ -293,7 +297,16 @@
                 </label>
                 <button type="submit">Add comment</button>
               </form>
-              <div class="comment-display" id="comment-display" data-testid="comment-display" hidden></div>
+              <div class="comment-display" id="comment-display" data-testid="comment-display" hidden>
+                <div class="comment-display-text" id="comment-display-text" data-testid="comment-display-text"></div>
+                <button
+                  type="button"
+                  class="comment-delete-button"
+                  id="comment-delete"
+                  data-testid="delete-comment">
+                  Delete
+                </button>
+              </div>
             </div>
             <aside class="suggestion-pane" aria-label="Changes">
               <h3>Changes</h3>

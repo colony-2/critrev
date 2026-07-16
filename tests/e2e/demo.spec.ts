@@ -359,14 +359,63 @@ test('hovering range comments and point comment icons opens comment overlays', a
 
   await page.getByTestId('range-comment').hover();
   await expect(page.getByTestId('comment-display')).toBeVisible();
-  await expect(page.getByTestId('comment-display')).toHaveText(sampleRangeComment);
+  await expect(page.getByTestId('comment-display-text')).toHaveText(sampleRangeComment);
 
   await page.getByTestId('comment-anchor').first().hover();
   await expect(page.getByTestId('comment-display')).toBeVisible();
-  await expect(page.getByTestId('comment-display')).toHaveText(samplePointComment);
+  await expect(page.getByTestId('comment-display-text')).toHaveText(samplePointComment);
 
   await page.mouse.move(4, 4);
   await expect(page.getByTestId('comment-display')).toBeHidden();
+});
+
+test('view menu hides and shows comments independently from revision previews', async ({page}) => {
+  await page.goto('/');
+
+  await expect(page.getByTestId('range-comment')).toHaveCount(1);
+  await expect(page.getByTestId('comment-anchor')).toHaveCount(1);
+
+  await page.getByTestId('view-mode-toggle').click();
+  await page.getByTestId('comments-toggle').uncheck();
+
+  await expect(page.getByTestId('range-comment')).toHaveCount(0);
+  await expect(page.getByTestId('comment-anchor')).toHaveCount(0);
+  await expect(page.getByTestId('critic-output')).toHaveValue(sampleEditorMarkup);
+  expect(await page.getByTestId('final-output').inputValue()).toContain(sampleRangeComment);
+  expect(await page.getByTestId('final-output').inputValue()).toContain(samplePointComment);
+
+  await page.getByRole('button', {name: 'Preview accept all'}).click();
+  await expect(page.getByTestId('range-comment')).toHaveCount(0);
+  await expect(page.getByTestId('comment-anchor')).toHaveCount(0);
+
+  await page.getByTestId('view-mode-toggle').click();
+  await page.getByTestId('comments-toggle').check();
+
+  await expect(page.getByTestId('range-comment')).toHaveCount(1);
+  await expect(page.getByTestId('comment-anchor')).toHaveCount(1);
+});
+
+test('deletes comments from the comment overlay after confirmation', async ({page}) => {
+  await page.goto('/');
+
+  await page.getByTestId('range-comment').hover();
+  await expect(page.getByTestId('comment-display')).toBeVisible();
+  await expect(page.getByTestId('comment-display-text')).toHaveText(sampleRangeComment);
+
+  page.once('dialog', async dialog => {
+    expect(dialog.message()).toContain('Delete this comment');
+    await dialog.accept();
+  });
+  await page.getByTestId('delete-comment').click();
+
+  await expect(page.getByTestId('range-comment')).toHaveCount(0);
+  await expect(page.getByTestId('comment-anchor')).toHaveCount(1);
+  expect(await page.getByTestId('critic-output').inputValue()).not.toContain(sampleRangeComment);
+  expect(await page.getByTestId('final-output').inputValue()).not.toContain(sampleRangeComment);
+  await expect(page.getByTestId('clean-output')).toHaveValue(
+    'this **great** for us\n\nPlease ship the polished draft.',
+  );
+  await expect(page.locator('#status-pill')).toHaveText('Comment deleted');
 });
 
 test('adds a range comment from selected text with the context menu', async ({page}) => {

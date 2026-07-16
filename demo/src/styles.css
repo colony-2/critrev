@@ -238,6 +238,23 @@ button:hover {
   font-weight: 700;
 }
 
+.menu-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid #e3e8ec;
+  padding: 8px 4px 2px;
+  color: #3c4043;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.menu-toggle input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -551,7 +568,10 @@ mark[data-comment-value],
 }
 
 .comment-display {
+  display: grid;
+  width: max-content;
   max-width: min(280px, calc(100vw - 40px));
+  gap: 8px;
   padding: 10px;
   color: #202124;
   font-size: 13px;
@@ -560,6 +580,24 @@ mark[data-comment-value],
 
 .comment-display[hidden] {
   display: none;
+}
+
+.comment-display-text {
+  overflow-wrap: anywhere;
+}
+
+.comment-delete-button {
+  justify-self: end;
+  min-height: 28px;
+  border-color: #d3a4a0;
+  padding: 0 8px;
+  color: #b3261e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.comment-delete-button:hover {
+  background: #fce8e6;
 }
 
 .comment-field {

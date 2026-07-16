@@ -46,11 +46,14 @@ const inlineReviewActions = getElement<HTMLElement>('inline-review-actions');
 const commentPopover = getElement<HTMLFormElement>('comment-popover');
 const commentInput = getElement<HTMLInputElement>('comment-input');
 const commentDisplay = getElement<HTMLElement>('comment-display');
+const commentDisplayText = getElement<HTMLElement>('comment-display-text');
+const commentDeleteButton = getElement<HTMLButtonElement>('comment-delete');
 const infoPopover = getElement<HTMLElement>('info-popover');
 const infoToggle = getElement<HTMLButtonElement>('info-toggle');
 const statusPill = getElement<HTMLElement>('status-pill');
 const viewModeMenu = getElement<HTMLElement>('view-mode-menu');
 const viewModeToggle = getElement<HTMLButtonElement>('view-mode-toggle');
+const commentsToggle = getElement<HTMLInputElement>('comments-toggle');
 const viewModeButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-view-mode]'),
 );
@@ -63,6 +66,8 @@ const contentModeButtons = Array.from(
 let activeViewMode: ViewMode = 'revisions';
 let activeContentMode: ReviewContentMode = 'wysiwyg';
 let activeChangeIndex: number | null = null;
+let activeCommentId: string | null = null;
+let commentsVisible = true;
 let editorModel: ReviewModel = emptyReviewModel();
 let editBaselineModel: ReviewModel = emptyReviewModel();
 let longTouchTimer = 0;
@@ -153,6 +158,11 @@ inlineReviewActions.addEventListener('pointerenter', cancelHoverDismiss);
 inlineReviewActions.addEventListener('pointerleave', scheduleHoverDismiss);
 commentDisplay.addEventListener('pointerenter', cancelHoverDismiss);
 commentDisplay.addEventListener('pointerleave', scheduleHoverDismiss);
+commentDeleteButton.addEventListener('click', () => {
+  if (activeCommentId !== null) {
+    deleteComment(activeCommentId);
+  }
+});
 renderedReview.addEventListener('keyup', () => {
   const selection = window.getSelection();
   const node = selection?.anchorNode;
@@ -217,6 +227,12 @@ for (const button of viewModeButtons) {
     renderEditorOutput();
   });
 }
+commentsToggle.addEventListener('change', () => {
+  commentsVisible = commentsToggle.checked;
+  hideCommentPopover();
+  hideCommentDisplay();
+  renderEditorOutput();
+});
 
 initializeEditor(sampleEditorInput());
 
@@ -240,12 +256,15 @@ function initializeEditor(criticMarkup: string): void {
   editorInput.value = criticMarkup;
   editorModel = criticMarkupToReviewModel(criticMarkup);
   activeChangeIndex = null;
+  activeCommentId = null;
   editBaselineModel = cloneReviewModel(editorModel);
   activeViewMode = 'revisions';
   activeContentMode = 'wysiwyg';
+  commentsVisible = true;
   for (const button of viewModeButtons) {
     button.classList.toggle('active', button.dataset.viewMode === activeViewMode);
   }
+  commentsToggle.checked = commentsVisible;
   syncContentModeButtons();
   renderEditorOutput();
 }
@@ -253,6 +272,7 @@ function initializeEditor(criticMarkup: string): void {
 function loadEditorInput(): void {
   editorModel = criticMarkupToReviewModel(editorInput.value);
   activeChangeIndex = null;
+  activeCommentId = null;
   editBaselineModel = cloneReviewModel(editorModel);
   renderEditorOutput();
 }
@@ -263,7 +283,7 @@ function updateGeneratedOnly(): void {
 }
 
 function renderEditorOutput(): void {
-  const visibleModel = modelForView(editorModel, activeViewMode);
+  const visibleModel = modelForEditorDisplay(editorModel, activeViewMode);
   reviewEditor.setModel(visibleModel, activeContentMode);
   reviewEditor.setEditable(activeViewMode === 'revisions');
   syncFormatToolbarState();
@@ -413,6 +433,10 @@ function reviewHoverTarget(target: Element): HTMLElement | null {
   const changeTarget = target.closest<HTMLElement>('[data-change-index]');
   if (changeTarget !== null && renderedReview.contains(changeTarget)) {
     return changeTarget;
+  }
+
+  if (!commentsVisible) {
+    return null;
   }
 
   const commentTarget = target.closest<HTMLElement>('[data-comment-value]');
@@ -583,11 +607,18 @@ function hideCommentPopover(): void {
 
 function showCommentDisplay(commentAnchor: HTMLElement): void {
   const comment = commentAnchor.dataset.commentValue ?? '';
+  const commentId = commentAnchor.dataset.commentId ?? null;
+  if (commentId === null) {
+    hideCommentDisplay();
+    return;
+  }
   hideInlineActions();
   hideCommentPopover();
   setActiveChangeIndex(null);
 
-  commentDisplay.textContent = comment;
+  activeCommentId = commentId;
+  commentDisplay.dataset.commentId = commentId;
+  commentDisplayText.textContent = comment;
   commentDisplay.hidden = false;
 
   const anchorRect = commentAnchor.getBoundingClientRect();
@@ -601,6 +632,9 @@ function showCommentDisplay(commentAnchor: HTMLElement): void {
 
 function hideCommentDisplay(): void {
   commentDisplay.hidden = true;
+  activeCommentId = null;
+  commentDisplay.removeAttribute('data-comment-id');
+  commentDisplayText.textContent = '';
 }
 
 function addCommentFromSelection(): void {
@@ -629,6 +663,29 @@ function addCommentFromSelection(): void {
   hideCommentDisplay();
   renderEditorOutput();
   statusPill.textContent = 'Comment added';
+}
+
+function deleteComment(commentId: string): void {
+  const nextComments = editorModel.comments.filter(comment => comment.id !== commentId);
+  if (nextComments.length === editorModel.comments.length) {
+    hideCommentDisplay();
+    return;
+  }
+  if (!window.confirm('Delete this comment?')) {
+    return;
+  }
+
+  editorModel = {
+    ...editorModel,
+    comments: nextComments,
+  };
+  activeChangeIndex = null;
+  activeCommentId = null;
+  editBaselineModel = cloneReviewModel(editorModel);
+  hideCommentPopover();
+  hideCommentDisplay();
+  renderEditorOutput();
+  statusPill.textContent = 'Comment deleted';
 }
 
 function selectionWithinRenderedReview(selection: Selection | null): boolean {
@@ -714,6 +771,18 @@ function modelForView(model: ReviewModel, viewMode: ViewMode): ReviewModel {
     nextModel = resolveReviewModelChange(nextModel, index, decision);
   }
   return nextModel;
+}
+
+function modelForEditorDisplay(model: ReviewModel, viewMode: ViewMode): ReviewModel {
+  const visibleModel = modelForView(model, viewMode);
+  if (commentsVisible) {
+    return visibleModel;
+  }
+
+  return {
+    ...visibleModel,
+    comments: [],
+  };
 }
 
 function renderMetrics(model: ReviewModel): string {
