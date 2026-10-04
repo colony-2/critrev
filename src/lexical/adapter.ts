@@ -1,3 +1,5 @@
+/// <reference lib="esnext.disposable" preserve="true" />
+
 import {CodeNode, $createCodeNode, $isCodeNode} from '@lexical/code-core';
 import {
   $createHorizontalRuleNode,
@@ -71,6 +73,7 @@ import {
   TextNode,
   mergeRegister,
   type EditorConfig,
+  type EditorThemeClasses,
   type EditorState,
   type LexicalEditor,
   type LexicalNode,
@@ -89,7 +92,7 @@ import {
   type ReviewModel,
   type ReviewRange,
   type ReviewSuggestion,
-} from '../../src/index';
+} from '../review-model.js';
 
 export type ReviewLexicalAdapter = {
   applyMarkdownFormat(command: ReviewMarkdownFormatCommand): void;
@@ -98,12 +101,25 @@ export type ReviewLexicalAdapter = {
   getModel(): ReviewModel;
   getSelectionOffset(): number | null;
   readSelectionRange(): ReviewRange | null;
+  /** Selection in Markdown source offsets, suitable for ReviewModel comments. */
+  readModelSelectionRange(): ReviewRange | null;
+  restoreModelSelectionOffset(offset: number | null): void;
   restoreSelectionOffset(offset: number | null): void;
   setEditable(editable: boolean): void;
   setModel(model: ReviewModel, mode: ReviewContentMode): void;
 };
 
+export type ReviewClassNames = Partial<Record<
+  'change' | 'addition' | 'deletion' | 'highlight' | 'rangeComment' | 'pointComment' | 'image', string
+>>;
+
 export type ReviewLexicalAdapterOptions = {
+  namespace?: string;
+  theme?: EditorThemeClasses;
+  classNames?: ReviewClassNames;
+  onError?(error: Error): void;
+  /** Customize the contents of point-comment buttons. Called when created/updated. */
+  renderCommentAnchor?(element: HTMLButtonElement, comment: {id: string; value: string}): void;
   onChange(model: ReviewModel, selectionOffset: number | null): void;
 };
 
@@ -249,7 +265,7 @@ class ReviewTextNode extends TextNode {
 
   override createDOM(config: EditorConfig, editor: LexicalEditor): HTMLElement {
     const element = super.createDOM(config, editor);
-    applyReviewTextDom(element, this.__review);
+    applyReviewTextDom(element, this.__review, config);
     return element;
   }
 
@@ -257,7 +273,7 @@ class ReviewTextNode extends TextNode {
     if (super.updateDOM(prevNode, dom, config)) {
       return true;
     }
-    applyReviewTextDom(dom, this.__review);
+    applyReviewTextDom(dom, this.__review, config);
     return false;
   }
 
@@ -320,17 +336,17 @@ class ReviewCommentAnchorNode extends ElementNode {
     return {id: self.__commentId, value: self.__value};
   }
 
-  override createDOM(): HTMLElement {
+  override createDOM(config: EditorConfig): HTMLElement {
     const element = document.createElement('button');
     element.type = 'button';
     element.innerHTML = commentIconSvg();
-    applyPointCommentDom(element, this.__commentId, this.__value);
+    applyPointCommentDom(element, this.__commentId, this.__value, config);
     return element;
   }
 
-  override updateDOM(prevNode: this, dom: HTMLElement): boolean {
+  override updateDOM(prevNode: this, dom: HTMLElement, config: EditorConfig): boolean {
     if (prevNode.__commentId !== this.__commentId || prevNode.__value !== this.__value) {
-      applyPointCommentDom(dom, this.__commentId, this.__value);
+      applyPointCommentDom(dom, this.__commentId, this.__value, config);
     }
     return false;
   }
@@ -394,15 +410,15 @@ class ReviewImageNode extends ElementNode {
     return {src: self.__src, title: self.__title};
   }
 
-  override createDOM(): HTMLElement {
+  override createDOM(config: EditorConfig): HTMLElement {
     const element = document.createElement('span');
-    applyReviewImageDom(element, this.__src, this.__title);
+    applyReviewImageDom(element, this.__src, this.__title, config);
     return element;
   }
 
-  override updateDOM(prevNode: this, dom: HTMLElement): boolean {
+  override updateDOM(prevNode: this, dom: HTMLElement, config: EditorConfig): boolean {
     if (prevNode.__src !== this.__src || prevNode.__title !== this.__title) {
-      applyReviewImageDom(dom, this.__src, this.__title);
+      applyReviewImageDom(dom, this.__src, this.__title, config);
     }
     return false;
   }
@@ -491,7 +507,7 @@ export function createReviewLexicalAdapter(
   let applyingModel = false;
 
   const editor = createEditor({
-    namespace: 'review2-demo',
+    namespace: options.namespace ?? 'critrev',
     nodes: [
       CodeNode,
       HeadingNode,
@@ -505,10 +521,12 @@ export function createReviewLexicalAdapter(
       ReviewTextNode,
     ],
     onError(error) {
-      throw error;
+      if (options.onError) options.onError(error);
+      else throw error;
     },
     theme: {
-      root: 'review-lexical-root',
+      ...options.theme,
+      critrev: {classNames: options.classNames, renderCommentAnchor: options.renderCommentAnchor},
     },
   });
 
@@ -516,14 +534,14 @@ export function createReviewLexicalAdapter(
   rootElement.dataset.editorEngine = 'lexical';
   rootElement.contentEditable = 'true';
 
+  let unregisterShortcuts = registerMarkdownShortcuts(editor, REVIEW_MARKDOWN_TRANSFORMERS);
   const cleanup = mergeRegister(
     registerRichText(editor),
     registerList(editor),
     registerCheckList(editor),
-    registerMarkdownShortcuts(editor, REVIEW_MARKDOWN_TRANSFORMERS),
     registerHistory(editor, createEmptyHistoryState(), 300),
-    editor.registerUpdateListener(({dirtyElements, dirtyLeaves, editorState}) => {
-      if (applyingModel || (dirtyElements.size === 0 && dirtyLeaves.size === 0)) {
+    editor.registerUpdateListener(({dirtyElements, dirtyLeaves, editorState, tags}) => {
+      if (applyingModel || tags.has('critrev-set-model') || (dirtyElements.size === 0 && dirtyLeaves.size === 0)) {
         return;
       }
 
@@ -543,6 +561,7 @@ export function createReviewLexicalAdapter(
       );
     },
     dispose() {
+      unregisterShortcuts();
       cleanup();
       editor.setRootElement(null);
     },
@@ -558,6 +577,31 @@ export function createReviewLexicalAdapter(
     },
     readSelectionRange() {
       return readDomSelectionRange(rootElement);
+    },
+    readModelSelectionRange() {
+      // Read Lexical's selection so paragraph separators are included in the offsets.
+      const selection = rootElement.ownerDocument.getSelection();
+      if (!selection?.anchorNode || !rootElement.contains(selection.anchorNode) ||
+          !selection.focusNode || !rootElement.contains(selection.focusNode)) return null;
+      const range = editor.getEditorState().read(() => modelDisplaySelectionRange());
+      if (range === null || currentMode === 'source') return range;
+      const map = createMarkdownSourceMap(currentModel.text, modelBoundaries(currentModel));
+      if (range.start === range.end) {
+        const offset = displayOffsetToSourceOffset(map, range.start, 'start');
+        return {start: offset, end: offset};
+      }
+      // Exclude formatting delimiters on the outside of selected text.
+      const start = displayOffsetToSourceOffset(map, range.start, 'end');
+      const end = displayOffsetToSourceOffset(map, range.end, 'start');
+      return {start: Math.min(start, end), end: Math.max(start, end)};
+    },
+    restoreModelSelectionOffset(offset: number | null) {
+      if (offset === null) return;
+      const displayOffset = currentMode === 'source' ? offset : sourceOffsetToDisplayOffset(
+        createMarkdownSourceMap(currentModel.text, modelBoundaries(currentModel)), offset,
+      );
+      rootElement.focus();
+      editor.update(() => selectModelDisplayOffset(displayOffset), {discrete: true});
     },
     restoreSelectionOffset(offset: number | null) {
       if (offset === null) {
@@ -579,14 +623,22 @@ export function createReviewLexicalAdapter(
     setModel(model: ReviewModel, mode: ReviewContentMode) {
       applyingModel = true;
       currentModel = cloneReviewModel(model);
+      if (currentMode !== mode) {
+        unregisterShortcuts();
+        unregisterShortcuts = mode === 'wysiwyg'
+          ? registerMarkdownShortcuts(editor, REVIEW_MARKDOWN_TRANSFORMERS) : () => {};
+      }
       currentMode = mode;
-      editor.update(
-        () => {
-          writeReviewModelToLexical(model, mode);
-        },
-        {discrete: true},
-      );
-      applyingModel = false;
+      try {
+        editor.update(
+          () => {
+            writeReviewModelToLexical(model, mode);
+          },
+          {discrete: true, tag: 'critrev-set-model'},
+        );
+      } finally {
+        applyingModel = false;
+      }
     },
   };
 }
@@ -2105,7 +2157,7 @@ function offsetForDomBoundary(root: HTMLElement, container: Node, offset: number
       return;
     }
 
-    if (node.matches('.comment-anchor')) {
+    if (node.matches('[data-critrev-comment-anchor]')) {
       return;
     }
 
@@ -2148,7 +2200,7 @@ function findDomPositionAtOffset(root: HTMLElement, offset: number): {node: Node
       return null;
     }
 
-    if (node.matches('.comment-anchor')) {
+    if (node.matches('[data-critrev-comment-anchor]')) {
       return null;
     }
 
@@ -2184,7 +2236,7 @@ function textLengthOfDomNode(node: Node): number {
   if (node.nodeType === Node.TEXT_NODE) {
     return node.nodeValue?.length ?? 0;
   }
-  if (!(node instanceof HTMLElement) || node.matches('.comment-anchor')) {
+  if (!(node instanceof HTMLElement) || node.matches('[data-critrev-comment-anchor]')) {
     return 0;
   }
   if (node.tagName === 'BR') {
@@ -2197,7 +2249,23 @@ function rootContainsBoundary(root: HTMLElement, node: Node): boolean {
   return node === root || root.contains(node);
 }
 
-function applyReviewTextDom(element: HTMLElement, meta: ReviewTextMeta | null): void {
+const defaultClassNames = {
+  change: 'review-change', addition: 'review-addition', deletion: 'review-deletion',
+  highlight: 'review-highlight', rangeComment: 'review-range-comment',
+  pointComment: 'comment-anchor', image: 'review-image',
+};
+
+function reviewTheme(config: EditorConfig): Pick<ReviewLexicalAdapterOptions, 'classNames' | 'renderCommentAnchor'> {
+  return config.theme.critrev ?? {};
+}
+
+function classTokens(value: string): string[] { return value.split(/\s+/).filter(Boolean); }
+
+function applyReviewTextDom(element: HTMLElement, meta: ReviewTextMeta | null, config: EditorConfig): void {
+  const names = {...defaultClassNames, ...reviewTheme(config).classNames};
+  for (const key of ['change', 'addition', 'deletion', 'highlight', 'rangeComment'] as const) {
+    element.classList.remove(...classTokens(names[key]));
+  }
   element.classList.remove(
     'active-review-change',
     'review-addition',
@@ -2217,8 +2285,8 @@ function applyReviewTextDom(element: HTMLElement, meta: ReviewTextMeta | null): 
   element.removeAttribute('tabindex');
 
   if (meta?.suggestion !== undefined) {
-    element.classList.add('review-change');
-    element.classList.add(meta.suggestion.part === 'new' ? 'review-addition' : 'review-deletion');
+    element.classList.add(...classTokens(names.change));
+    element.classList.add(...classTokens(meta.suggestion.part === 'new' ? names.addition : names.deletion));
     element.dataset.changeIndex = String(meta.suggestion.changeIndex);
     element.dataset.changeKind = meta.suggestion.type;
     element.dataset.suggestionId = meta.suggestion.id;
@@ -2227,7 +2295,7 @@ function applyReviewTextDom(element: HTMLElement, meta: ReviewTextMeta | null): 
   }
 
   if (meta?.comment !== undefined) {
-    element.classList.add('review-range-comment');
+    element.classList.add(...classTokens(names.rangeComment));
     element.dataset.commentId = meta.comment.id;
     element.dataset.commentValue = meta.comment.value;
     element.dataset.testid = 'range-comment';
@@ -2235,13 +2303,16 @@ function applyReviewTextDom(element: HTMLElement, meta: ReviewTextMeta | null): 
   }
 
   if (meta?.highlightId !== undefined) {
-    element.classList.add('review-highlight');
+    element.classList.add(...classTokens(names.highlight));
     element.dataset.highlightId = meta.highlightId;
   }
 }
 
-function applyPointCommentDom(element: HTMLElement, commentId: string, value: string): void {
-  element.className = 'comment-anchor';
+function applyPointCommentDom(element: HTMLElement, commentId: string, value: string, config: EditorConfig): void {
+  const options = reviewTheme(config);
+  element.className = options.classNames?.pointComment ?? defaultClassNames.pointComment;
+  element.dataset.critrevCommentAnchor = '';
+  options.renderCommentAnchor?.(element as HTMLButtonElement, {id: commentId, value});
   element.dataset.commentId = commentId;
   element.dataset.commentValue = value;
   element.dataset.testid = 'comment-anchor';
@@ -2249,8 +2320,8 @@ function applyPointCommentDom(element: HTMLElement, commentId: string, value: st
   element.contentEditable = 'false';
 }
 
-function applyReviewImageDom(element: HTMLElement, src: string, title: string | null): void {
-  element.className = 'review-image';
+function applyReviewImageDom(element: HTMLElement, src: string, title: string | null, config: EditorConfig): void {
+  element.className = reviewTheme(config).classNames?.image ?? defaultClassNames.image;
   element.dataset.src = src;
   if (title === null) {
     element.removeAttribute('data-title');
@@ -2324,4 +2395,55 @@ function emptyReviewModel(): ReviewModel {
 
 function commentIconSvg(): string {
   return `<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 5h14v10H8l-3 3V5Z"></path></svg>`;
+}
+
+function modelDisplayPoints(): {node: LexicalNode; start: number; end: number}[] {
+  const points: {node: LexicalNode; start: number; end: number}[] = [];
+  let offset = 0;
+  const visit = (node: LexicalNode): void => {
+    const point = {node, start: offset, end: offset};
+    points.push(point);
+    if ($isReviewCommentAnchorNode(node)) return;
+    if ($isTextNode(node) || $isLineBreakNode(node)) offset += node.getTextContent().length;
+    else if ($isElementNode(node)) {
+      const children = node.getChildren();
+      children.forEach((child, index) => {
+        visit(child);
+        if ($isElementNode(child) && !child.isInline() && index < children.length - 1) offset += 2;
+      });
+    }
+    point.end = offset;
+  };
+  visit($getRoot());
+  return points;
+}
+
+function modelDisplaySelectionRange(): ReviewRange | null {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return null;
+  const points = modelDisplayPoints();
+  const offset = (key: string, index: number): number => {
+    const point = points.find(item => item.node.getKey() === key);
+    if (!point) return 0;
+    if ($isElementNode(point.node)) {
+      const child = point.node.getChildAtIndex(index);
+      return child ? points.find(item => item.node.is(child))?.start ?? point.end : point.end;
+    }
+    return Math.min(point.start + index, point.end);
+  };
+  const start = offset(selection.anchor.key, selection.anchor.offset);
+  const end = offset(selection.focus.key, selection.focus.offset);
+  return {start: Math.min(start, end), end: Math.max(start, end)};
+}
+
+function selectModelDisplayOffset(offset: number): void {
+  const points = modelDisplayPoints();
+  for (const point of points) {
+    if ($isTextNode(point.node) && point.end >= offset) {
+      const index = Math.max(0, offset - point.start);
+      point.node.select(index, index);
+      return;
+    }
+  }
+  $getRoot().selectEnd();
 }

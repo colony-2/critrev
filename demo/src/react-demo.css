@@ -1,0 +1,16 @@
+/* Example application styles. These are not part of the npm package. */
+body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem; color: #17212b; }
+main { max-width: 65rem; margin: auto; }
+nav { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; margin-block: 1rem; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+.app-editor { border: 1px solid #889; border-radius: .5rem; padding: 1rem; min-height: 8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.app-editor[data-content-mode="source"] { font-family: monospace; }
+.app-addition { color: #167238; }
+.app-deletion { color: #a32323; text-decoration: line-through; }
+.app-comment { background: #fff0aa; }
+.app-bold { font-weight: bold; }
+.comment-anchor { border: 0; background: #fff0aa; color: inherit; padding: 0; }
+.comment-anchor svg { width: 1em; height: 1em; fill: none; stroke: currentColor; }
+aside article { border-block-end: 1px solid #ddd; padding-block: .5rem; }
+pre { white-space: pre-wrap; }

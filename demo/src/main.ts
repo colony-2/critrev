@@ -2,13 +2,13 @@ import './styles.css';
 
 import {
   beforeAfterToCriticMarkup,
+  reconcileReviewEdit as reconcileRenderedEdit,
+  reviewModelForView as modelForView,
   criticMarkupToReviewModel,
   finalizeReviewModel,
-  insertReviewText,
   listReviewChanges,
   resolveReviewModelChange,
   reviewModelToCriticMarkup,
-  withAddedSuggestion,
   type ReviewChange,
   type ReviewChangeDecision,
   type ReviewComment,
@@ -22,7 +22,7 @@ import {
   type ReviewMarkdownFormatAction,
   type ReviewMarkdownFormatCommand,
   type ReviewRichBlockFormat,
-} from './review-lexical';
+} from '../../src/lexical/index.js';
 
 type ViewMode = 'accept' | 'reject' | 'revisions';
 type ChangeListItem =
@@ -832,64 +832,6 @@ function hideToolbarPopover(popover: HTMLElement, trigger: HTMLButtonElement): v
   trigger.setAttribute('aria-expanded', 'false');
 }
 
-function reconcileRenderedEdit(baseline: ReviewModel, domModel: ReviewModel): ReviewModel {
-  const diff = textDiff(baseline.text, domModel.text);
-  if (diff.oldValue === '' && diff.newValue === '') {
-    return domModel;
-  }
-
-  const oldRange = {start: diff.start, end: diff.start + diff.oldValue.length};
-  const newRange = {start: diff.start, end: diff.start + diff.newValue.length};
-  if (
-    rangeTouchesSuggestion(baseline, oldRange) ||
-    rangeTouchesSuggestion(domModel, newRange)
-  ) {
-    return domModel;
-  }
-
-  if (diff.oldValue === '') {
-    const expanded = insertReviewText(baseline, diff.start, diff.newValue);
-    return withAddedSuggestion(expanded, {
-      newRange,
-      type: 'addition',
-    });
-  }
-
-  if (diff.newValue === '') {
-    return withAddedSuggestion(baseline, {
-      oldRange,
-      type: 'deletion',
-    });
-  }
-
-  const expanded = insertReviewText(
-    baseline,
-    diff.start + diff.oldValue.length,
-    diff.newValue,
-  );
-  return withAddedSuggestion(expanded, {
-    newRange: {
-      end: diff.start + diff.oldValue.length + diff.newValue.length,
-      start: diff.start + diff.oldValue.length,
-    },
-    oldRange,
-    type: 'substitution',
-  });
-}
-
-function modelForView(model: ReviewModel, viewMode: ViewMode): ReviewModel {
-  if (viewMode === 'revisions') {
-    return model;
-  }
-
-  let nextModel = cloneReviewModel(model);
-  const decision = viewMode === 'accept' ? 'accept' : 'reject';
-  for (let index = nextModel.suggestions.length - 1; index >= 0; index -= 1) {
-    nextModel = resolveReviewModelChange(nextModel, index, decision);
-  }
-  return nextModel;
-}
-
 function modelForEditorDisplay(model: ReviewModel, viewMode: ViewMode): ReviewModel {
   const visibleModel = modelForView(model, viewMode);
   if (commentsVisible) {
@@ -956,19 +898,6 @@ function textDiff(before: string, after: string): {newValue: string; oldValue: s
     oldValue: before.slice(start, beforeEnd),
     start,
   };
-}
-
-function rangeTouchesSuggestion(model: ReviewModel, range: ReviewRange): boolean {
-  if (range.start === range.end) {
-    return false;
-  }
-  return model.suggestions.some(suggestion =>
-    rangesIntersect(range, suggestion.oldRange) || rangesIntersect(range, suggestion.newRange),
-  );
-}
-
-function rangesIntersect(left: ReviewRange, right: ReviewRange | undefined): boolean {
-  return right !== undefined && left.start < right.end && right.start < left.end;
 }
 
 function nextAnnotationId(model: {readonly comments: readonly ReviewComment[]}): string {

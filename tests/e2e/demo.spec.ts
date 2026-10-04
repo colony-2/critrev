@@ -11,7 +11,7 @@ const sampleEditorMarkup = [
 test('shows each CriticMarkup pipeline stage', async ({page}) => {
   await page.goto('/');
 
-  await expect(page).toHaveTitle('review2 CriticMarkup demo');
+  await expect(page).toHaveTitle('critrev CriticMarkup demo');
   await expect(page.getByRole('heading', {name: 'CriticMarkup Pipeline'})).toBeVisible();
 
   await expect(page.getByRole('heading', {name: 'Raw Editor Input'})).toBeVisible();

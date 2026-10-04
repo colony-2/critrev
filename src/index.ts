@@ -36,3 +36,13 @@ export type {
   ReviewSuggestion,
   ReviewSuggestionType,
 } from './review-model.js';
+
+export {
+  addReviewComment,
+  beforeAfterToReviewModel,
+  reconcileReviewEdit,
+  removeReviewComment,
+  reviewModelForView,
+  updateReviewComment,
+} from './review-operations.js';
+export type {ReviewViewMode} from './review-operations.js';

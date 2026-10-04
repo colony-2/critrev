@@ -12,6 +12,10 @@
     "src/**/*.ts",
     "demo/src/**/*.ts",
     "tests/**/*.ts",
-    "playwright.config.ts"
-  ]
+    "playwright.config.ts",
+    "src/**/*.tsx",
+    "demo/src/**/*.tsx",
+    "vite.config.ts"
+  ],
+  "exclude": []
 }
