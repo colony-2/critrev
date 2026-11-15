@@ -1,0 +1,8 @@
+body { margin: 0; background: #f6f8fb; color: #18243b; font: 16px/1.55 system-ui, sans-serif; }
+main { max-width: 780px; margin: 36px auto; padding: 0 20px; }
+h1 { font-size: 25px; margin-bottom: 4px; } main > p { color: #53637b; margin-top: 0; }
+.fixture-editor { background: white; border: 1px solid #a6b5ca; padding: 24px; min-height: 190px; border-radius: 8px; outline-color: #315fbe; white-space: pre-wrap; }
+.fixture-image { display: inline-block; vertical-align: middle; border: 1px dashed #9caec6; margin: 4px; padding: 10px; color: #42526a; background: #f4f7fb; }
+.fixture-image img { display: block; max-width: 260px; max-height: 150px; }
+[data-critrev-image-selected="true"] { outline: 3px solid #315fbe; outline-offset: 2px; }
+#outside { margin-top: 20px; color: #53637b; }

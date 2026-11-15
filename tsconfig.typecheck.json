@@ -6,7 +6,18 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "noEmit": true,
-    "rootDir": "."
+    "rootDir": ".",
+    "paths": {
+      "critrev": [
+        "./src/index.ts"
+      ],
+      "critrev/react": [
+        "./src/react/index.ts"
+      ],
+      "critrev/lexical": [
+        "./src/lexical/index.ts"
+      ]
+    }
   },
   "include": [
     "src/**/*.ts",

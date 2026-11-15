@@ -8,3 +8,5 @@ export {useReview} from './use-review.js';
 export type {ReviewController, UseReviewOptions} from './use-review.js';
 export type {ReviewContentMode, ReviewClassNames, ReviewMarkdownFormatCommand} from '../lexical/index.js';
 export type {ReviewViewMode} from '../review-operations.js';
+
+export type {ReviewImage, ReviewImagePasteResult, ReviewImagePasteFailure, ReviewImagePasteOutcome, ReviewMarkdownInspection} from '../lexical/image-markdown.js';

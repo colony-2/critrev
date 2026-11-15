@@ -9,6 +9,8 @@ import {
   type ReviewContentMode, type ReviewLexicalAdapter, type ReviewLexicalAdapterOptions,
   type ReviewMarkdownFormatCommand,
 } from '../lexical/index.js';
+import {reviewModelsEqual, copyReviewModel} from '../review-model-equality.js';
+import type {ReviewImage, ReviewMarkdownInspection} from '../lexical/image-markdown.js';
 import type {ReviewModel, ReviewRange} from '../review-model.js';
 import {
   reconcileReviewEdit, reviewModelForView, reviewTextDiff, selectionOffsetAfterSuggestion,
@@ -16,6 +18,8 @@ import {
 } from '../review-operations.js';
 
 export type ReviewEditorHandle = {
+  insertImages(images: readonly ReviewImage[]): boolean;
+  inspectMarkdown(markdown: string): ReviewMarkdownInspection;
   focus(): void;
   /** Returns source offsets in value. Null outside the editor or in preview modes. */
   getSelectionRange(): ReviewRange | null;
@@ -23,8 +27,8 @@ export type ReviewEditorHandle = {
 };
 
 export type ReviewEditorProps = Omit<HTMLAttributes<HTMLDivElement>,
-  'children' | 'dangerouslySetInnerHTML' | 'onChange' | 'contentEditable' | 'defaultValue'
-> & Pick<ReviewLexicalAdapterOptions, 'namespace' | 'theme' | 'classNames' | 'renderCommentAnchor' | 'onError'> & {
+  'children' | 'dangerouslySetInnerHTML' | 'onChange' | 'onError' | 'contentEditable' | 'defaultValue'
+> & Pick<ReviewLexicalAdapterOptions, 'namespace' | 'theme' | 'classNames' | 'renderCommentAnchor' | 'onError' | 'onPasteImages' | 'onPasteImagesResult' | 'imagePreviews'> & {
   value: ReviewModel;
   onChange?(value: ReviewModel): void;
   contentMode?: ReviewContentMode;
@@ -40,17 +44,26 @@ export type ReviewEditorProps = Omit<HTMLAttributes<HTMLDivElement>,
 export const ReviewEditor = forwardRef<ReviewEditorHandle, ReviewEditorProps>(function ReviewEditor({
   value, onChange, contentMode = 'wysiwyg', viewMode = 'revisions', readOnly = false,
   trackChanges = true, namespace, theme, classNames, renderCommentAnchor, onError,
-  onCommentRequest, onContextMenu, ...domProps
+  onPasteImages, onPasteImagesResult, imagePreviews, onCommentRequest, onContextMenu, ...domProps
 }, forwardedRef) {
   const root = useRef<HTMLDivElement>(null);
   const adapter = useRef<ReviewLexicalAdapter | null>(null);
+  const changeDepth = useRef(0);
   const rendered = useRef<{value: ReviewModel; contentMode: ReviewContentMode; viewMode: ReviewViewMode} | null>(null);
-  const latest = useRef({value, onChange, contentMode, viewMode, readOnly, trackChanges, onError});
-  latest.current = {value, onChange, contentMode, viewMode, readOnly, trackChanges, onError};
+  const latest = useRef({value, onChange, contentMode, viewMode, readOnly, trackChanges, onError, onPasteImages, onPasteImagesResult});
+  latest.current = {value, onChange, contentMode, viewMode, readOnly, trackChanges, onError, onPasteImages, onPasteImagesResult};
   const [, refresh] = useReducer((n: number) => n + 1, 0);
   const editable = !readOnly && viewMode === 'revisions' && onChange !== undefined;
 
   useImperativeHandle(forwardedRef, () => ({
+    insertImages(images) {
+      const state = latest.current;
+      return !state.readOnly && state.viewMode === 'revisions' && !!state.onChange && (adapter.current?.insertImages(images) ?? false);
+    },
+    inspectMarkdown(markdown) {
+      if (!adapter.current) throw new Error('Markdown inspection requires a mounted browser editor.');
+      return adapter.current.inspectMarkdown(markdown);
+    },
     focus: () => adapter.current?.focus(),
     getSelectionRange: () => latest.current.viewMode === 'revisions'
       ? adapter.current?.readModelSelectionRange() ?? null : null,
@@ -69,6 +82,8 @@ export const ReviewEditor = forwardRef<ReviewEditorHandle, ReviewEditorProps>(fu
       ...(theme === undefined ? {} : {theme}),
       ...(classNames === undefined ? {} : {classNames}),
       ...(renderCommentAnchor === undefined ? {} : {renderCommentAnchor}),
+      get onPasteImages() { return latest.current.onPasteImages; },
+      get onPasteImagesResult() { return latest.current.onPasteImagesResult; },
       onError(error) {
         if (latest.current.onError) latest.current.onError(error);
         else throw error;
@@ -76,16 +91,21 @@ export const ReviewEditor = forwardRef<ReviewEditorHandle, ReviewEditorProps>(fu
       onChange(domModel, selectionOffset) {
         const state = latest.current;
         if (state.readOnly || state.viewMode !== 'revisions' || !state.onChange) return;
-        const baseline = rendered.current?.value ?? state.value;
-        const next = state.trackChanges ? reconcileReviewEdit(baseline, domModel, selectionOffset) : domModel;
-        rendered.current = {value: next, contentMode: state.contentMode, viewMode: state.viewMode};
-        if (next !== domModel) {
-          instance.setModel(next, state.contentMode);
-          instance.restoreModelSelectionOffset(selectionOffsetAfterSuggestion(reviewTextDiff(baseline.text, domModel.text, selectionOffset)));
+        changeDepth.current += 1;
+        try {
+          const baseline = rendered.current?.value ?? state.value;
+          const next = state.trackChanges ? reconcileReviewEdit(baseline, domModel, selectionOffset) : domModel;
+          rendered.current = {value: copyReviewModel(next), contentMode: state.contentMode, viewMode: state.viewMode};
+          if (next !== domModel) {
+            instance.setModel(next, state.contentMode);
+            instance.restoreModelSelectionOffset(selectionOffsetAfterSuggestion(reviewTextDiff(baseline.text, domModel.text, selectionOffset)));
+          }
+          state.onChange(next);
+        } finally {
+          changeDepth.current -= 1;
+          // A controlled owner may decline the edit, so reconcile after notification.
+          refresh();
         }
-        state.onChange(next);
-        // A controlled owner may decline the edit, so always reconcile with props.
-        refresh();
       },
     });
     adapter.current = instance;
@@ -99,13 +119,17 @@ export const ReviewEditor = forwardRef<ReviewEditorHandle, ReviewEditorProps>(fu
 
   useEffect(() => {
     const instance = adapter.current;
-    if (!instance) return;
+    // A synchronous owner can flush an older render's passive effects while
+    // accepting this change. Its stale value must not replace the new state
+    // or clear history. The refresh after notification reconciles current props.
+    if (!instance || changeDepth.current !== 0) return;
     const previous = rendered.current;
-    if (!previous || previous.value !== value || previous.contentMode !== contentMode || previous.viewMode !== viewMode) {
+    if (!previous || !reviewModelsEqual(previous.value, value) || previous.contentMode !== contentMode || previous.viewMode !== viewMode) {
       instance.setModel(reviewModelForView(value, viewMode), contentMode);
-      rendered.current = {value, contentMode, viewMode};
+      rendered.current = {value: copyReviewModel(value), contentMode, viewMode};
     }
     instance.setEditable(editable);
+    instance.setImagePreviews(imagePreviews ?? new Map());
   });
 
   return <div

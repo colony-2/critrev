@@ -283,7 +283,7 @@ This low-level adapter reports direct editor snapshots. Use `reconcileReviewEdit
 
 ## Scope and limitations
 
-The diff is deterministic and preserves logical formatting-boundary replacements, but is not a full Markdown AST diff. WYSIWYG supports common headings, lists, links, quotes, code and inline formatting; it can normalize Markdown spelling/spacing after edits. It is not a lossless renderer for arbitrary Markdown/HTML, tables or deeply nested structures. Images are represented by their editable alt text and metadata, not fetched previews.
+The diff is deterministic and preserves logical formatting-boundary replacements, but is not a full Markdown AST diff. WYSIWYG supports common headings, lists, links, quotes, code and inline formatting; it can normalize Markdown spelling/spacing after edits. It is not a lossless renderer for arbitrary Markdown/HTML, tables or deeply nested structures. Rich images are selectable atoms with host-bound previews; edit their metadata in source mode.
 
 The model can hold richer annotations than the flat CriticMarkup format. Overlapping comments/highlights and comments spanning suggestion boundaries do not serialize losslessly; nested annotations inside suggestions are not fully reconstructed by the parser. Persist model JSON when those cases matter. WYSIWYG displays one comment per text segment. Applications needing collaborative edits, threaded discussions, authorship or conflict resolution should manage those separately.
 
@@ -302,6 +302,11 @@ npm run test:e2e
 npm run dev
 ```
 
+To use an existing Chromium instead of Playwright's download, set
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to its executable when running browser tests
+or `check:package -- --browser`. That browser needs working fonts as well as its
+runtime libraries. `CRITREV_TEST_PORT` selects a test server port (default 5173).
+
 The original pipeline demo runs at `http://localhost:5173/`; the React consumer example runs at `http://localhost:5173/react.html`. Its [source](demo/src/react-demo.tsx) and [CSS](demo/src/react-demo.css) belong to the application, not the package.
 
 `check:package` installs an actual tarball in a temporary project, checks core imports without React, and typechecks/server-renders React 18 and 19 consumers. CI also runs unit and browser tests. Production builds exclude tests, demos and internal planning documents.
@@ -311,3 +316,118 @@ Before a first release, confirm ownership of the npm package name `critrev` and 
 ## License
 
 [MIT](LICENSE) © 2026 critrev contributors.
+
+### Images in an ordinary Markdown editor
+
+Use an empty-annotation model and disable tracking for an ordinary prompt editor.
+The host stages files synchronously and returns one durable descriptor per file.
+Only explicit preview-map entries supply display URLs. No Markdown destination is
+fetched as a fallback.
+
+```tsx
+import {useRef, useState} from 'react';
+import {ReviewEditor, type ReviewEditorHandle} from 'critrev/react';
+import type {ReviewModel} from 'critrev';
+
+function Prompt() {
+  const editor = useRef<ReviewEditorHandle>(null);
+  const [value, setValue] = useState<ReviewModel>({
+    text: '', suggestions: [], comments: [], highlights: [],
+  });
+  return <ReviewEditor ref={editor} value={value} onChange={setValue}
+    trackChanges={false} contentMode="source"
+    onPasteImages={files => ({images: files.map(file => stageFile(file))})}
+    onPasteImagesResult={result => {
+      if (!result.inserted) releaseStagedFiles(result.files, result.reason);
+    }}
+    imagePreviews={previewBindings} />;
+}
+```
+
+`stageFile`, `releaseStagedFiles` and `previewBindings` belong to your application.
+Stage and validate bytes before returning; this callback cannot return a promise.
+Return `{reject: true}` to decline the entire claimed batch. A batch takes
+precedence over duplicate clipboard HTML/text and stays consumed on rejection.
+Every invocation gets one synchronous `onPasteImagesResult` outcome if configured,
+with the original File objects. Failure reasons are `rejected`, `invalid-result`,
+`count-mismatch`, `invalid-image`, `selection-unavailable`, `callback-error` and
+`insertion-failed`. On success, `images` contains the committed descriptors.
+Exceptions are forwarded through `onError` after the outcome; an `onChange` or
+result-observer exception cannot turn an exposed commit into failed insertion.
+
+`editor.current.insertImages([{src: 'pasted-unique.png', alt: 'Diagram', title: ''}])`
+returns the commit boolean and invokes neither paste callback. Insertion replaces
+this editor's current selection synchronously and creates a separate undo step.
+Insertion snapshots the current browser selection, including a range selected in
+the same event, so undo and failed-commit rollback restore that range.
+Preserve selection from toolbar mouse-down handlers; this API keeps no asynchronous
+bookmark. Accept controlled changes synchronously. A successful outcome acknowledges
+the editor commit; your controlled owner still chooses its next value.
+
+`ReviewImage`, `ReviewImagePasteResult`, `ReviewImagePasteOutcome`,
+`ReviewImagePasteFailure` and `ReviewMarkdownInspection` are exported from both
+`critrev/react` and `critrev/lexical`. The imperative surface has the same operations:
+
+```ts
+import {createReviewLexicalAdapter} from 'critrev/lexical';
+const editor = createReviewLexicalAdapter(root, {
+  onChange(value) { saveDraftValue(value); },
+  onPasteImages(files) { return {images: files.map(stageFile)}; },
+  onPasteImagesResult(result) {
+    if (!result.inserted) releaseStagedFiles(result.files, result.reason);
+  },
+});
+editor.setModel({text: '', suggestions: [], comments: [], highlights: []}, 'source');
+editor.setImagePreviews(new Map([['pasted-unique.png', hostDisplayURL]]));
+// With a current selection inside root:
+editor.insertImages([{src: 'pasted-unique.png', alt: 'Diagram'}]);
+const inspection = editor.inspectMarkdown(editor.getModel().text);
+if (inspection.exact) editor.setModel(editor.getModel(), 'wysiwyg');
+// When the mounted editor is no longer needed:
+editor.dispose();
+```
+
+Descriptors accept string `src`, string `alt` and optional string `title`. Missing
+and empty titles remain distinct. Destinations are nonempty URI references without
+whitespace, controls or angle brackets. Relative names, HTTP(S), and inert
+application references are metadata; `blob:`, `data:`, `javascript:`, `vbscript:`
+and `file:` are rejected case-insensitively. Alt/title reject controls and line
+breaks. The serializer backslash-escapes backslashes and delimiter punctuation
+without URL rewriting: `{src: 'folder/a(b).png', alt: '', title: ''}` becomes
+`![](folder/a\(b\).png "")`. One invalid descriptor rejects the entire batch.
+These checks do not validate bytes, quotas, raster content or reader permissions.
+
+Rich images are noneditable atoms. Click or use left/right arrows to select one;
+Backspace/Delete removes the selected atom. Undo/redo restores its metadata. Edit
+alt/src/title in source mode. `classNames.image`, `[data-critrev-image]` and
+`[data-critrev-image-selected="true"]` support host styling. Missing/failed bindings
+show an alt-based accessible placeholder, including “Image” for empty alt. The
+package adds no CSS. Replace preview maps immutably; omit the React prop or pass an
+empty imperative map to clear bindings. Callback/map replacements preserve content,
+selection and history. The host creates and revokes preview URLs.
+
+Rich insertion preserves the text and formatting on either side. It splits links
+and inline code around the image batch. Inside fenced code, it places the images
+in a paragraph between the remaining code blocks, preserving the code language.
+The following caret stays immediately after the batch. Source insertion writes
+escaped Markdown syntax at the source selection.
+
+Retain successful-paste bytes while undo can restore their references, even after
+all visible images have been deleted. Release failed staging through the result
+callback. Use a fresh React key or new adapter for each draft. Equivalent complete
+controlled values preserve history; actual external replacements clear unrelated
+history. Compatible ordinary source/rich switches retain model-based undo/redo.
+An incompatible older target stays available for source replay rather than being
+silently normalized or consumed by rich undo.
+
+Mount imported Markdown in source mode, then call `inspectMarkdown` through the
+mounted handle before enabling rich editing and before each source-to-rich switch.
+It returns `{exact, projectedMarkdown}` from the real rich importer/exporter.
+Equality is strict, including whitespace and line endings. A mismatch can be
+spelling normalization; keep the original source and show:
+“This Markdown needs source editing to preserve it. Your text is unchanged.”
+Inspection preserves the live document, focus, selection, callbacks and history,
+and has no preview bindings or image downloads. It requires a mounted browser
+editor; SSR renders the shell only. Exact projection does not authorize arbitrary
+Markdown/HTML or submission references. New image guarantees cover tracking disabled
+with empty annotations; structural image suggestions remain outside this contract.
