@@ -1,8 +1,9 @@
+import type {EditorState} from 'lexical';
 import {copyReviewModel} from '../review-model-equality.js';
 import type {ReviewModel} from '../review-model.js';
 export type SourceSelection = {anchor: number; focus: number; atom?: boolean};
-export type ModelSnapshot = {model: ReviewModel; selection: SourceSelection | null};
-const copy = (x: ModelSnapshot): ModelSnapshot => ({model: copyReviewModel(x.model), selection: x.selection && {...x.selection}});
+export type ModelSnapshot = {model: ReviewModel; selection: SourceSelection | null; richState?: EditorState};
+const copy = (x: ModelSnapshot): ModelSnapshot => ({model: copyReviewModel(x.model), selection: x.selection && {...x.selection}, ...(x.richState ? {richState: x.richState} : {})});
 /** Changes are journaled only after commit. A refused replay does not consume an entry. */
 export class ModelHistory {
   private entries: {before: ModelSnapshot; after: ModelSnapshot}[] = [];

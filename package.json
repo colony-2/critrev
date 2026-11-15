@@ -1,6 +1,6 @@
 {
   "name": "critrev",
-  "version": "0.1.1-images.20261115.t0940",
+  "version": "0.1.2-images.20261115.t1900",
   "license": "MIT",
   "description": "Unstyled React review editor and framework-independent Markdown diff, suggestions, and comments.",
   "type": "module",
@@ -29,7 +29,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "npm run clean && tsc -p tsconfig.json",
+    "build": "npm run clean && tsc -p tsconfig.json && node scripts/write-build-info.mjs",
     "build:demo": "vite build demo --config vite.config.ts --outDir ../dist-demo --emptyOutDir",
     "clean": "rm -rf dist",
     "dev": "vite --config vite.config.ts --host 0.0.0.0",

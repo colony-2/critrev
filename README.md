@@ -431,3 +431,28 @@ and has no preview bindings or image downloads. It requires a mounted browser
 editor; SSR renders the shell only. Exact projection does not authorize arbitrary
 Markdown/HTML or submission references. New image guarantees cover tracking disabled
 with empty annotations; structural image suggestions remain outside this contract.
+
+### Rich history correction in 0.1.2-images.20261115.t1900
+
+Rich edits now retain private immutable editor snapshots with history. Enter-created
+empty paragraphs, image deletion and image insertion replay their actual document
+and native selection instead of rebuilding through Markdown. Enter and image
+changes keep separate undo steps while ordinary typing coalesces. An unchanged
+source/rich round trip also retains the rich document; moving the source selection
+maps the current source range when returning to rich mode. Markdown inspection
+continues to compare exact strings, so editor-created trailing paragraphs may
+still report a nonexact source projection.
+
+Replace the previous pinned tarball and update your lockfile. Public imports,
+props, handles and ReviewModel JSON are unchanged. Continue to echo controlled
+values synchronously and retain host-owned image bytes and preview bindings for
+images that undo can restore. Snapshots stay in the adapter's in-memory history
+and increase its memory cost; they do not persist across remounts or disposal.
+
+To validate a built delivery from its exact bytes, run
+`node scripts/check-package.mjs --tarball /absolute/path/critrev.tgz --sha256 DIGEST --integrity sha512-BASE64 --revision SOURCE_COMMIT --browser --source-browser`.
+This checks isolated controlled React 18 and 19 consumers against source and the
+installed package on desktop and phone Chromium. Use a working Chromium and font
+environment; `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` can select an existing browser.
+The tarball's private `dist/build-info.json` identifies the committed source used
+by the build. A dirty build fails delivery validation.

@@ -28,7 +28,7 @@ export default defineConfig({
   },
   webServer: {
     command: `npm run dev -- --port ${port} --strictPort`,
-    reuseExistingServer: !process.env.CRITREV_PACKAGE_ROOT,
+    reuseExistingServer: !process.env.CRITREV_PACKAGE_ROOT && !process.env.CRITREV_REACT_ROOT,
     timeout: 30_000,
     url: `${baseURL}/images.html`,
   },

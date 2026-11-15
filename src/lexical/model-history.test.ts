@@ -28,3 +28,26 @@ test('U12 typing grouping, image boundaries, branch edits and clear', () => {
   history.record(snap(''), snap('new')); assert.equal(history.replay('redo', () => true), false);
   history.clear(); assert.equal(history.replay('undo', () => true), false);
 });
+test('U01,U02 immutable rich endpoints travel with copied models and selections', async () => {
+  const {createEditor, $getRoot, $createParagraphNode} = await import('lexical');
+  const editor = createEditor({onError(error) { throw error; }});
+  editor.update(() => $getRoot().append($createParagraphNode()), {discrete: true});
+  const first = editor.getEditorState(), second = first.clone(null), last = first.clone();
+  const before = {...snap(''), richState: first}, after = {...snap('a'), richState: second};
+  const history = new ModelHistory(); history.record(before, after, true, 100);
+  (before.model as {text: string}).text = 'mutated'; before.selection!.anchor = 99;
+  history.record({...snap('a'), richState: second}, {...snap('ab'), richState: last}, true, 200);
+  (after.model as {text: string}).text = 'mutated';
+  history.replay('undo', x => { assert.equal(x.model.text, ''); assert.equal(x.selection!.anchor, 0); assert.equal(x.richState, first); (x.model as {text: string}).text = 'again'; return true; });
+  history.replay('redo', x => { assert.equal(x.model.text, 'ab'); assert.equal(x.richState, last); return true; });
+  history.replay('undo', x => { assert.equal(x.model.text, ''); return true; });
+});
+test('U04 boundaries, distance and elapsed time prevent typing grouping', () => {
+  for (const separate of ['boundary', 'selection', 'time']) {
+    const history = new ModelHistory(); history.record(snap(''), snap('a'), true, 100);
+    if (separate === 'boundary') history.boundary();
+    history.record(snap('a', separate === 'selection' ? 0 : 1), snap('ab'), true, separate === 'time' ? 400 : 200);
+    history.replay('undo', x => { assert.equal(x.model.text, 'a'); return true; });
+    history.replay('undo', x => { assert.equal(x.model.text, ''); return true; });
+  }
+});

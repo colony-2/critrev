@@ -32,10 +32,15 @@ try {
   if (packed) assert.equal(packed.integrity, originalIdentity.integrity);
   // Inspect supplied bytes directly. Explicit-tarball checking never calls npm pack.
   const files = run('tar', ['-tzf', tarball]).trim().split('\n').map(x => x.replace(/^package\//, ''));
-  for (const file of ['README.md', 'LICENSE', 'package.json']) assert.ok(files.includes(file), `Missing ${file}`);
+  for (const file of ['README.md', 'LICENSE', 'package.json', 'dist/build-info.json']) assert.ok(files.includes(file), `Missing ${file}`);
   for (const file of files) assert.ok(!/(?:\.test\.|^(?:demo|tests|src|review)\/|\.map$)/.test(file), `Unexpected published file: ${file}`);
   const manifest = JSON.parse(run('tar', ['-xOf', tarball, 'package/package.json']));
   assert.equal(manifest.license, 'MIT');
+  const build = JSON.parse(run('tar', ['-xOf', tarball, 'package/dist/build-info.json']));
+  assert.equal(build.version, manifest.version);
+  assert.equal(build.dirty, false, 'Delivery requires a committed source revision');
+  assert.match(build.revision, /^[a-f0-9]{40}$/);
+  if (argument('--revision')) assert.equal(build.revision, argument('--revision'), 'Managed source revision mismatch');
   assert.match(run('tar', ['-xOf', tarball, 'package/LICENSE']), /MIT License/);
   for (const entry of Object.values(manifest.exports)) {
     for (const target of typeof entry === 'string' ? [entry] : Object.values(entry)) assert.ok(files.includes(target.replace(/^\.\//, '')), `Missing export: ${target}`);
@@ -102,21 +107,37 @@ try {
     run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', `react@${version}`, `react-dom@${version}`, `@types/react@${version}`, `@types/react-dom@${version}`]);
     run(process.execPath, [tsc, '--noEmit', '--strict', '--exactOptionalPropertyTypes', '--jsx', 'react-jsx', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', 'consumer.tsx']);
     run(process.execPath, ['ssr.mjs']); console.log(`Packed React ${version}: strict public APIs and SSR passed.`);
+    if (args.includes('--browser')) {
+      // Copy only the fixture. Each run selects managed source or installed dist
+      // with the consumer React aliases and its own Vite cache.
+      mkdirSync(join(directory, 'demo/src'), {recursive: true});
+      for (const name of ['images.html', 'src/image-fixture.tsx', 'src/image-fixture.css']) cpSync(join(workspace, 'demo', name), join(directory, 'demo', name));
+      const packageRoot = join(directory, 'node_modules/critrev');
+      assert.ok(existsSync(join(packageRoot, 'dist/react/index.js')));
+      for (const runtime of args.includes('--source-browser') ? ['source', 'package'] : ['package']) {
+        const cache = join(directory, `.vite-${runtime}-${version}`);
+        const reportPath = join(directory, `browser-${runtime}-${version}.json`);
+        const env = {...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath, ...(argument('--captures') ? {REVIEW_CAPTURE_DIR: join(resolve(argument('--captures')), `${runtime}-react${version}`)} : {}), CRITREV_PACKAGE_ROOT: runtime === 'package' ? packageRoot : '', CRITREV_REACT_ROOT: join(directory, 'node_modules'), CRITREV_EXPECT_REACT: String(version), CRITREV_VITE_CACHE: cache, CRITREV_DEMO_ROOT: join(directory, 'demo'), PLAYWRIGHT_BROWSERS_PATH: resolve(workspace, '.cache/ms-playwright')};
+        const playwright = resolve(workspace, 'node_modules/@playwright/test/cli.js');
+        execFileSync(process.execPath, [playwright, 'test', 'image-editor.spec.ts', 'image-paste.spec.ts', 'image-previews.spec.ts', 'image-history.spec.ts', 'markdown-images.spec.ts', 'markdown-inspection.spec.ts', '--workers=2', '--max-failures=5', '--reporter=list,json', ...(project ? ['--project', project] : [])], {cwd: workspace, env, stdio: 'inherit'});
+        const metadata = JSON.parse(readFileSync(join(cache, 'deps/_metadata.json'), 'utf8'));
+        for (const name of ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime']) {
+          assert.ok(resolve(cache, 'deps', metadata.optimized[name].src).startsWith(join(directory, 'node_modules', name.split('/')[0])), `Unexpected ${name} resolution`);
+        }
+        const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+        const tests = [];
+        const visit = suite => { for (const spec of suite.specs ?? []) tests.push(...spec.tests); for (const child of suite.suites ?? []) visit(child); };
+        report.suites.forEach(visit);
+        for (const browserProject of project ? [project] : ['chromium', 'mobile-chrome']) {
+          const selected = tests.filter(test => test.projectName === browserProject);
+          assert.ok(selected.length > 0 && selected.every(test => test.status === 'expected' && test.results.every(result => result.status === 'passed')), 'Every required browser check must pass');
+          console.log(JSON.stringify({runtime, project: browserProject, passed: selected.length, react: JSON.parse(readFileSync(join(directory, 'node_modules/react/package.json'))).version, reactDOM: JSON.parse(readFileSync(join(directory, 'node_modules/react-dom/package.json'))).version, result: 'passed', tarball: originalIdentity.sha256}));
+        }
+      }
+    } else console.log('Browser checks were not requested; use --browser for delivery acceptance.');
   }
-  if (args.includes('--browser')) {
-    // Copy only the fixture into the installed consumer. Every runtime import is
-    // resolved there; no workspace source module is available through its imports.
-    mkdirSync(join(directory, 'demo/src'), {recursive: true});
-    for (const name of ['images.html', 'src/image-fixture.tsx', 'src/image-fixture.css']) cpSync(join(workspace, 'demo', name), join(directory, 'demo', name));
-    const packageRoot = join(directory, 'node_modules/critrev');
-    assert.ok(existsSync(join(packageRoot, 'dist/react/index.js')));
-    const env = {...process.env, CRITREV_PACKAGE_ROOT: packageRoot, CRITREV_DEMO_ROOT: join(directory, 'demo'), PLAYWRIGHT_BROWSERS_PATH: resolve(workspace, '.cache/ms-playwright')};
-    const playwright = resolve(workspace, 'node_modules/@playwright/test/cli.js');
-    execFileSync(process.execPath, [playwright, 'test', 'image-editor.spec.ts', 'image-paste.spec.ts', 'image-previews.spec.ts', 'image-history.spec.ts', 'markdown-images.spec.ts', 'markdown-inspection.spec.ts', '--workers=2', '--max-failures=5', ...(project ? ['--project', project] : [])], {cwd: workspace, env, stdio: 'inherit'});
-    console.log(`Installed-tarball browser fixtures passed (${project ?? 'desktop and mobile Chromium'}).`);
-  } else console.log('Browser checks were not requested; use --browser for delivery acceptance.');
   assert.deepEqual(identity(tarball), originalIdentity, 'Tarball bytes changed during validation');
-  console.log(JSON.stringify({version: manifest.version, tarball, ...originalIdentity, files: files.length}, null, 2));
+  console.log(JSON.stringify({version: manifest.version, revision: build.revision, tarball, ...originalIdentity, files: files.length}, null, 2));
 } catch (error) {
   if (error.stdout) process.stderr.write(error.stdout);
   if (error.stderr) process.stderr.write(error.stderr);

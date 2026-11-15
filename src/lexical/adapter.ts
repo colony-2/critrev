@@ -7,6 +7,7 @@ import {
   HorizontalRuleNode,
 } from '@lexical/extension';
 import {reviewModelsEqual, copyReviewModel} from '../review-model-equality.js';
+import {richDocumentsEqual, richImagesEqual, verifiedRichState} from './rich-history.js';
 import {ModelHistory, type ModelSnapshot, type SourceSelection} from './model-history.js';
 import {copyValidImages, imageAt, ImagePattern, serializeImage, type ReviewImage, type ReviewImagePasteResult, type ReviewImagePasteOutcome, type ReviewImagePasteFailure, type ReviewMarkdownInspection} from './image-markdown.js';
 export type {ReviewImage, ReviewImagePasteResult, ReviewImagePasteOutcome, ReviewImagePasteFailure, ReviewMarkdownInspection} from './image-markdown.js';
@@ -63,7 +64,7 @@ import {
   $createNodeSelection, $createRangeSelection, $setSelection, $isNodeSelection,
   $createRangeSelectionFromDom,
   DecoratorNode, COMMAND_PRIORITY_HIGH, UNDO_COMMAND, REDO_COMMAND,
-  KEY_ARROW_LEFT_COMMAND, KEY_ARROW_RIGHT_COMMAND, KEY_BACKSPACE_COMMAND, KEY_DELETE_COMMAND,
+  KEY_ARROW_LEFT_COMMAND, KEY_ARROW_RIGHT_COMMAND, KEY_BACKSPACE_COMMAND, KEY_DELETE_COMMAND, KEY_ENTER_COMMAND, $addUpdateTag,
   $createParagraphNode,
   $createTextNode,
   $getEditor,
@@ -498,6 +499,8 @@ export function createReviewLexicalAdapter(
   let previews = new Map(options.imagePreviews);
   const previewElements = new Set<HTMLElement>();
   const history = new ModelHistory();
+  let retainedRich: ModelSnapshot | null = null;
+  let sourceEntrySelection: SourceSelection | null = null;
   const forwardErrors = (errors: unknown[]): void => {
     for (const value of errors) {
       const error = value instanceof Error ? value : new Error(String(value));
@@ -543,12 +546,12 @@ export function createReviewLexicalAdapter(
     const sourceAtom = mode === 'source' && anchor !== focus ? imageAt(model.text, Math.min(anchor, focus)) : null;
     return {anchor, focus, ...($isNodeSelection(selection) || sourceAtom?.end === Math.max(anchor, focus) ? {atom: true} : {})};
   });
-  const restore = (selection: SourceSelection | null): void => {
+  const restore = (selection: SourceSelection | null, mode = currentMode, model = currentModel): void => {
     if (!selection) return;
-    const map = currentMode === 'source' ? null : createMarkdownSourceMap(currentModel.text, modelBoundaries(currentModel));
+    const map = mode === 'source' ? null : createMarkdownSourceMap(model.text, modelBoundaries(model));
     const anchor = map ? sourceOffsetToDisplayOffset(map, selection.anchor) : selection.anchor;
     const focus = map ? sourceOffsetToDisplayOffset(map, selection.focus) : selection.focus;
-    if (selection.atom && currentMode === 'wysiwyg') {
+    if (selection.atom && mode === 'wysiwyg') {
       const atom = modelDisplayPoints().find(x => $isReviewImageNode(x.node) && x.start === Math.min(anchor, focus));
       if (atom) { const selected = $createNodeSelection(); selected.add(atom.node.getKey()); $setSelection(selected); return; }
     }
@@ -604,17 +607,71 @@ export function createReviewLexicalAdapter(
     return {exact: markdown === projectedMarkdown, projectedMarkdown};
   };
   const emit = (selection: SourceSelection | null): void => options.onChange(cloneReviewModel(currentModel), selection?.anchor === selection?.focus ? selection?.anchor ?? null : null);
+  const richModel = (state: EditorState): ReviewModel => editorStateToReviewSnapshot(state, 'wysiwyg').model;
+  const endpoint = (state = editor.getEditorState(), model = currentModel): ModelSnapshot => {
+    const selection = selectionFor(state, model);
+    let richState = currentMode === 'wysiwyg' ? state : null;
+    if (!richState && retainedRich && reviewModelsEqual(retainedRich.model, model)) {
+      richState = verifiedRichState(retainedRich, richModel);
+      if (richState && JSON.stringify(selection) !== JSON.stringify(sourceEntrySelection)) {
+        // Keep the document, but map a source caret that moved before this edit.
+        const preparation = createEditor({namespace: 'critrev-selection', nodes: reviewNodes(), onError(error) { throw error; }});
+        try {
+          preparation.setEditorState(richState.clone());
+          preparation.update(() => restore(selection, 'wysiwyg', model), {discrete: true});
+          richState = preparation.getEditorState();
+        } finally { preparation.setRootElement(null); }
+      }
+    }
+    return {model, selection, ...(richState ? {richState} : {})};
+  };
+  const applyRich = (state: EditorState, keepFocus = true): void => {
+    applyingModel = true;
+    try {
+      editor.setEditorState(state, {tag: keepFocus ? 'critrev-set-model' : 'skip-dom-selection'});
+    }
+    finally { applyingModel = false; }
+    refreshPreviews();
+  };
   const replay = (direction: 'undo' | 'redo'): boolean => {
     if (disposed || !editor.isEditable()) return false;
     let committed: ModelSnapshot | null = null;
+    let modelChanged = false;
+    const errors: unknown[] = [];
     const changed = history.replay(direction, target => {
-      if (currentMode === 'wysiwyg' && !target.model.suggestions.length && !target.model.comments.length && !target.model.highlights.length && !inspect(target.model.text).exact) return false;
-      currentModel = cloneReviewModel(target.model);
-      write(currentModel, target.selection);
-      committed = target;
-      return true;
+      const saved = editor.getEditorState(), previous = currentModel;
+      transactionErrors = [];
+      try {
+        const rich = verifiedRichState(target, richModel);
+        if (currentMode === 'wysiwyg') {
+          if (target.richState && !rich) return false;
+          if (!rich && !target.model.suggestions.length && !target.model.comments.length && !target.model.highlights.length && !inspect(target.model.text).exact) return false;
+        }
+        currentModel = cloneReviewModel(target.model);
+        if (currentMode === 'wysiwyg' && rich) applyRich(rich);
+        else write(currentModel, target.selection);
+        if (transactionErrors.length) throw transactionErrors[0];
+        if (!reviewModelsEqual(editorStateToReviewSnapshot(editor.getEditorState(), currentMode).model, target.model)) {
+          throw new Error('History replay could not preserve the complete document.');
+        }
+        retainedRich = rich ? target : null;
+        sourceEntrySelection = currentMode === 'source' ? selectionFor() : null;
+        modelChanged = !reviewModelsEqual(previous, currentModel);
+        committed = target;
+        return true;
+      } catch (error) {
+        currentModel = previous;
+        applyRich(saved);
+        errors.push(error);
+        return false;
+      } finally { transactionErrors = null; }
     });
-    if (changed && committed) { generation += 1; emit((committed as ModelSnapshot).selection); }
+    // Finish the journal before exposing the commit to a synchronous owner.
+    if (changed && committed) {
+      generation += 1;
+      if (modelChanged) { try { emit((committed as ModelSnapshot).selection); } catch (error) { errors.push(error); } }
+    }
+    forwardErrors(errors);
     return changed;
   };
   const eligible = (): boolean => !disposed && editor.isEditable() && domSelectionInside() && selectionFor() !== null;
@@ -644,8 +701,9 @@ export function createReviewLexicalAdapter(
     const start = Math.min(selection.anchor, selection.focus), end = Math.max(selection.anchor, selection.focus);
     const inserted = images.map(serializeImage).join('');
     let candidate = {...currentModel, text: currentModel.text.slice(0, start) + inserted + currentModel.text.slice(end)};
-    const before: ModelSnapshot = {model: cloneReviewModel(currentModel), selection};
+    const before: ModelSnapshot = endpoint();
     const saved = editor.getEditorState();
+    let prepared: EditorState | null = null;
     let afterSelection: SourceSelection = {anchor: start + inserted.length, focus: start + inserted.length};
     transactionErrors = [];
     try {
@@ -658,25 +716,27 @@ export function createReviewLexicalAdapter(
           preparation.update(() => insertRichImageNodes(images), {discrete: true});
           candidate = editorStateToReviewSnapshot(preparation.getEditorState(), currentMode).model;
           const following = selectionFor(preparation.getEditorState(), candidate);
-          if (!following || following.anchor !== following.focus || projectMarkdown(candidate.text) !== candidate.text) {
+          if (!following || following.anchor !== following.focus) {
             throw new Error('Image insertion could not preserve a replayable rich document.');
           }
           afterSelection = following;
+          prepared = preparation.getEditorState();
         } else {
           preparation.update(() => writeReviewModelToLexical(candidate, currentMode), {discrete: true});
         }
       } finally { preparation.setRootElement(null); }
       currentModel = candidate;
-      write(candidate, afterSelection);
+      if (prepared) applyRich(prepared); else write(candidate, afterSelection);
       if (transactionErrors.length) throw transactionErrors[0];
-      currentModel = editorStateToReviewSnapshot(editor.getEditorState(), currentMode).model;
+      if (!reviewModelsEqual(editorStateToReviewSnapshot(editor.getEditorState(), currentMode).model, candidate)) {
+        throw new Error('Image insertion could not preserve the complete document.');
+      }
     } catch (error) {
       currentModel = before.model;
-      applyingModel = true;
-      try { editor.setEditorState(saved, {tag: 'critrev-set-model'}); } finally { applyingModel = false; }
-      refreshPreviews(); errors.push(error); return false;
+      applyRich(saved); errors.push(error); return false;
     } finally { transactionErrors = null; }
-    history.record(before, {model: currentModel, selection: afterSelection});
+    history.record(before, endpoint());
+    retainedRich = null;
     generation += 1;
     try { emit(afterSelection); } catch (error) { errors.push(error); }
     return true;
@@ -744,8 +804,10 @@ export function createReviewLexicalAdapter(
   };
   const cleanup = mergeRegister(
     registerRichText(editor), registerList(editor), registerCheckList(editor),
-    editor.registerCommand(UNDO_COMMAND, () => { replay('undo'); return true; }, COMMAND_PRIORITY_HIGH),
-    editor.registerCommand(REDO_COMMAND, () => { replay('redo'); return true; }, COMMAND_PRIORITY_HIGH),
+    // Commands run inside an update; apply and verify replay after it commits.
+    editor.registerCommand(UNDO_COMMAND, () => { queueMicrotask(() => replay('undo')); return true; }, COMMAND_PRIORITY_HIGH),
+    editor.registerCommand(REDO_COMMAND, () => { queueMicrotask(() => replay('redo')); return true; }, COMMAND_PRIORITY_HIGH),
+    editor.registerCommand(KEY_ENTER_COMMAND, () => { history.boundary(); $addUpdateTag('critrev-boundary'); return false; }, COMMAND_PRIORITY_HIGH),
     editor.registerCommand(KEY_ARROW_LEFT_COMMAND, event => atomArrow(event, -1), COMMAND_PRIORITY_HIGH),
     editor.registerCommand(KEY_ARROW_RIGHT_COMMAND, event => atomArrow(event, 1), COMMAND_PRIORITY_HIGH),
     editor.registerCommand(KEY_BACKSPACE_COMMAND, deleteAtom, COMMAND_PRIORITY_HIGH),
@@ -754,12 +816,17 @@ export function createReviewLexicalAdapter(
       if (applyingModel || tags.has('critrev-set-model')) { refreshPreviews(); return; }
       if (dirtyElements.size === 0 && dirtyLeaves.size === 0) { refreshPreviews(); return; }
       const snapshot = editorStateToReviewSnapshot(editorState, currentMode);
-      if (reviewModelsEqual(snapshot.model, currentModel)) { refreshPreviews(); return; }
-      const before = {model: currentModel, selection: selectionFor(prevEditorState)};
-      const after = {model: snapshot.model, selection: selectionFor(editorState, snapshot.model)};
-      history.record(before, after, !before.selection?.atom && !after.selection?.atom);
+      const modelChanged = !reviewModelsEqual(snapshot.model, currentModel);
+      const structureChanged = currentMode === 'wysiwyg' && !richDocumentsEqual(prevEditorState, editorState);
+      if (!modelChanged && !structureChanged) { refreshPreviews(); return; }
+      const before = endpoint(prevEditorState);
+      const after = endpoint(editorState, snapshot.model);
+      history.record(before, after, modelChanged && !tags.has('critrev-boundary') && !before.selection?.atom && !after.selection?.atom &&
+        (currentMode !== 'wysiwyg' || richImagesEqual(prevEditorState, editorState)));
+      if (tags.has('critrev-boundary')) history.boundary();
+      retainedRich = null;
       currentModel = cloneReviewModel(snapshot.model); generation += 1;
-      refreshPreviews(); emit(after.selection);
+      refreshPreviews(); if (modelChanged) emit(after.selection);
     }),
   );
   return {
@@ -783,7 +850,7 @@ export function createReviewLexicalAdapter(
       rootElement.removeEventListener('paste', paste, true); rootElement.removeEventListener('pointerdown', pointer, true);
       rootElement.removeEventListener('click', pointer, true);
       for (const element of previewElements) clearPreview(element);
-      previewElements.clear(); previews.clear(); unregisterShortcuts(); cleanup(); editor.setRootElement(null); rootElement.replaceChildren(); history.clear();
+      previewElements.clear(); previews.clear(); unregisterShortcuts(); cleanup(); editor.setRootElement(null); rootElement.replaceChildren(); history.clear(); retainedRich = null;
     },
     focus() { if (!disposed) editor.focus(); },
     getModel() { return cloneReviewModel(currentModel); },
@@ -812,10 +879,24 @@ export function createReviewLexicalAdapter(
       if (equal && currentMode === mode) return;
       const selection = equal ? selectionFor() : null;
       const keepFocus = domSelectionInside();
-      if (!equal) history.clear(); else history.boundary();
+      if (!equal) { history.clear(); retainedRich = null; sourceEntrySelection = null; }
+      else {
+        history.boundary();
+        if (currentMode === 'wysiwyg') retainedRich = endpoint();
+      }
+      const rich = equal && retainedRich ? verifiedRichState(retainedRich, richModel) : null;
+      const reuseSelection = JSON.stringify(selection) === JSON.stringify(sourceEntrySelection);
       if (currentMode !== mode) { unregisterShortcuts(); unregisterShortcuts = mode === 'wysiwyg' ? registerMarkdownShortcuts(editor, REVIEW_MARKDOWN_TRANSFORMERS) : () => {}; }
       currentMode = mode; currentModel = cloneReviewModel(model); generation += 1;
-      write(currentModel, selection, keepFocus);
+      if (mode === 'wysiwyg' && rich) {
+        applyRich(rich, keepFocus);
+        if (!reuseSelection) {
+          applyingModel = true;
+          try { editor.update(() => restore(selection), {discrete: true, tag: keepFocus ? 'critrev-set-model' : ['critrev-set-model', 'skip-dom-selection']}); }
+          finally { applyingModel = false; }
+        }
+      } else write(currentModel, selection, keepFocus);
+      if (mode === 'source') sourceEntrySelection = selectionFor();
     },
   };
 }

@@ -1,9 +1,10 @@
-import {StrictMode, useRef, useState} from 'react';
+import {StrictMode, useRef, useState, version as reactVersion} from 'react';
 import {createRoot} from 'react-dom/client';
-import {flushSync} from 'react-dom';
+import {flushSync, version as reactDOMVersion} from 'react-dom';
 import {ReviewEditor, type ReviewEditorHandle, type ReviewImage, type ReviewImagePasteOutcome} from 'critrev/react';
 import {createReviewLexicalAdapter, type ReviewLexicalAdapter, type ReviewContentMode} from 'critrev/lexical';
 import type {ReviewModel} from 'critrev';
+import {$getRoot, $createParagraphNode, $createTextNode, $createLineBreakNode, type LexicalEditor} from 'lexical';
 import './image-fixture.css';
 
 const model = (text: string): ReviewModel => ({text, comments: [], highlights: [], suggestions: []});
@@ -12,6 +13,8 @@ const params = new URLSearchParams(location.search);
 const surface = params.get('surface') ?? 'react';
 let adapter: ReviewLexicalAdapter | null = null;
 let handle: ReviewEditorHandle | null = null;
+let peerAdapter: ReviewLexicalAdapter | null = null;
+let peerRoot: HTMLElement | null = null;
 let current = model('Before target after');
 let mode: ReviewContentMode = params.get('mode') === 'source' ? 'source' : 'wysiwyg';
 let previews = new Map<string, string>();
@@ -53,6 +56,7 @@ const pasteHandler = (files: readonly File[]): never | {images: readonly ReviewI
     case 'dispose': teardown?.(); break;
     case 'echo': commit(clone(current)); break;
     case 'fail': failNextRender(); break;
+    case 'prepare-fail': failNextPreparation(); break;
   }
   return {images: files.map((_, i) => ({...images[i % images.length]!}))};
 };
@@ -73,6 +77,11 @@ function failNextRender() {
     if (args[0] === 'span') { document.createElement = original; throw new Error('injected precommit render failure'); }
     return original.apply(document, args);
   } as Document['createElement'];
+}
+function failNextPreparation() {
+  const prototype = Object.getPrototypeOf(lexical().getEditorState());
+  const original = prototype.clone;
+  prototype.clone = function () { prototype.clone = original; throw new Error('injected preparation failure'); };
 }
 function App() {
   const [value, setValue] = useState(current);
@@ -109,7 +118,12 @@ else {
   });
   adapter.setModel(current, mode); teardown = () => adapter?.dispose();
 }
+// Fixture-only fault and structural controls never enter the package exports.
+const lexical = () => (root() as HTMLElement & {__lexicalEditor: LexicalEditor}).__lexicalEditor;
+let imagePrototype: {getImage(): ReviewImage} | undefined;
+let originalImageRead: (() => ReviewImage) | undefined;
 const fixture = {
+  runtime: {react: reactVersion, reactDOM: reactDOMVersion},
   get ready() { return surface === 'imperative' || handle !== null; },
   get value() { return clone(current); }, get logs() { return clone(logs); },
   get mode() { return mode; }, get images() { return images; },
@@ -158,6 +172,30 @@ const fixture = {
     root().dispatchEvent(event); logs.push('return'); return event.defaultPrevented;
   },
   htmlPaste() { const data = new DataTransfer(); data.setData('text/html', '<img src="https://unbound.invalid/leak.png" alt="external">'); root().dispatchEvent(new ClipboardEvent('paste', {clipboardData: data, bubbles: true, cancelable: true})); },
+  createPeer(text = 'Peer draft') {
+    peerRoot = document.createElement('div'); peerRoot.dataset.peerEditor = ''; document.body.append(peerRoot);
+    peerAdapter = createReviewLexicalAdapter(peerRoot, {onChange(value) { peerAdapter!.setModel(value, 'wysiwyg'); }});
+    peerAdapter.setModel(model(text), 'wysiwyg');
+  },
+  selectPeerEnd() { peerAdapter!.restoreModelSelectionOffset(peerAdapter!.getModel().text.length); },
+  peerValue() { return peerAdapter!.getModel(); },
+  disposePeer() { peerAdapter!.dispose(); peerRoot!.remove(); },
+  insertPeer() { return peerAdapter!.insertImages(images); },
+  equalModelStructure() {
+    lexical().update(() => {
+      const block = $createParagraphNode().append($createTextNode('a'), $createLineBreakNode(), $createLineBreakNode(), $createTextNode('b'));
+      $getRoot().clear().append(block); block.selectEnd();
+    }, {discrete: true});
+  },
+  imageProjectionFault(enabled: boolean) {
+    if (!imagePrototype) {
+      const image = Array.from(lexical().getEditorState()._nodeMap.values()).find(node => node.getType() === 'review-image');
+      if (!image) throw new Error('Projection fault needs an image before deletion.');
+      imagePrototype = Object.getPrototypeOf(image) as typeof imagePrototype;
+      originalImageRead = imagePrototype!.getImage;
+    }
+    imagePrototype!.getImage = enabled ? function (this: {getImage(): ReviewImage}) { return {...originalImageRead!.call(this), src: 'mismatching.png'}; } : originalImageRead!;
+  },
   failNextRender, dispose() { teardown?.(); },
 };
 Object.assign(window, {fixture});
