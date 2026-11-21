@@ -456,3 +456,30 @@ installed package on desktop and phone Chromium. Use a working Chromium and font
 environment; `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` can select an existing browser.
 The tarball's private `dist/build-info.json` identifies the committed source used
 by the build. A dirty build fails delivery validation.
+
+`node scripts/verify.mjs /absolute/new/report-directory` runs the complete delivery
+suite from a clean committed checkout: units, typecheck, builds, general browser
+tests and all eight source/package × React 18/19 × desktop/phone configurations.
+It freezes one versioned tarball and retains reports, logs, identity and captures
+even on failure. The build verify hook invokes this same command. Supply a working
+Chromium through `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` or `chromium` on PATH. On a
+minimal Nix worker, the runner uses fonts already in that browser's closure.
+Add `--focused` for a local regression check across the same eight configurations;
+the hook always runs the full selection. Focused results do not establish full
+delivery acceptance. `check-package.mjs --grep REGEX` also narrows browser cases;
+each selected configuration must still include all seven image/history suites.
+
+### Fresh-empty correction in 0.1.3-images.20261116.t0800
+
+A new empty editor now has a valid rich paragraph before an unchanged controlled
+value can return. First source edits, including `---` and `## ` (with its trailing
+space), and first image batches can undo to emptiness and redo exactly. Retained
+rich states are verified before cloning or restoring; a legacy uninitialized empty
+endpoint is prepared separately without rewriting saved snapshots. Native caret
+and range changes are synchronized before browser edits and mode changes so
+history retains the current selection even before `selectionchange` arrives.
+
+Install the new tarball pin and refresh the consumer lockfile. Public imports,
+props, handles and model JSON remain unchanged; no reset call or normalization
+workaround is needed. The earlier rich paragraph, image metadata, atomic paste,
+strict inspection and host-owned preview contracts still apply.

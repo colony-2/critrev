@@ -1,0 +1,2 @@
+packages:
+  - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#chromium

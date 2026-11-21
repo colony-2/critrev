@@ -4,7 +4,7 @@ import {flushSync, version as reactDOMVersion} from 'react-dom';
 import {ReviewEditor, type ReviewEditorHandle, type ReviewImage, type ReviewImagePasteOutcome} from 'critrev/react';
 import {createReviewLexicalAdapter, type ReviewLexicalAdapter, type ReviewContentMode} from 'critrev/lexical';
 import type {ReviewModel} from 'critrev';
-import {$getRoot, $createParagraphNode, $createTextNode, $createLineBreakNode, type LexicalEditor} from 'lexical';
+import {createEditor, $getRoot, $createParagraphNode, $createTextNode, $createLineBreakNode, type LexicalEditor} from 'lexical';
 import './image-fixture.css';
 
 const model = (text: string): ReviewModel => ({text, comments: [], highlights: [], suggestions: []});
@@ -15,7 +15,7 @@ let adapter: ReviewLexicalAdapter | null = null;
 let handle: ReviewEditorHandle | null = null;
 let peerAdapter: ReviewLexicalAdapter | null = null;
 let peerRoot: HTMLElement | null = null;
-let current = model('Before target after');
+let current = model(params.has('empty') ? '' : 'Before target after');
 let mode: ReviewContentMode = params.get('mode') === 'source' ? 'source' : 'wysiwyg';
 let previews = new Map<string, string>();
 let flags: Record<string, unknown> = {};
@@ -116,7 +116,7 @@ else {
     onChange: changeHandler,
     onError(error) { if (flags.noError) throw error; errorHandler(error); },
   });
-  adapter.setModel(current, mode); teardown = () => adapter?.dispose();
+  if (!params.has('before-set-model')) adapter.setModel(current, mode); teardown = () => adapter?.dispose();
 }
 // Fixture-only fault and structural controls never enter the package exports.
 const lexical = () => (root() as HTMLElement & {__lexicalEditor: LexicalEditor}).__lexicalEditor;
@@ -140,7 +140,7 @@ const fixture = {
     if (surface === 'react') handle?.applyMarkdownFormat(command); else adapter?.applyMarkdownFormat({...command, mode});
   },
   previews(entries: [string, string][]) { previews = new Map(entries); if (surface === 'react') render(); else adapter?.setImagePreviews(previews); },
-  select(start: number, end = start, backward = false) {
+  select(start: number, end = start, backward = false, notify = true) {
     const element = root(); element.focus();
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
@@ -162,7 +162,7 @@ const fixture = {
     };
     const [a, ao] = at(backward ? end : start), [b, bo] = at(backward ? start : end);
     window.getSelection()!.setBaseAndExtent(a, ao, b, bo);
-    document.dispatchEvent(new Event('selectionchange'));
+    if (notify) document.dispatchEvent(new Event('selectionchange'));
   },
   paste(count = 2, type = 'image/png') {
     const data = new DataTransfer();
@@ -195,6 +195,19 @@ const fixture = {
       originalImageRead = imagePrototype!.getImage;
     }
     imagePrototype!.getImage = enabled ? function (this: {getImage(): ReviewImage}) { return {...originalImageRead!.call(this), src: 'mismatching.png'}; } : originalImageRead!;
+  },
+  // Return a legacy zero-child endpoint only for the capture inside setModel.
+  // The live state and the injected snapshot stay untouched; no package API.
+  legacyEmptyEndpoint() {
+    const editor = lexical(), original = editor.getEditorState;
+    const invalid = createEditor().getEditorState(), json = JSON.stringify(invalid.toJSON());
+    let reads = 0, injected = false;
+    editor.getEditorState = function () {
+      if (++reads === 3) { injected = true; return invalid; }
+      return original.call(editor);
+    };
+    try { setMode('source'); } finally { editor.getEditorState = original; }
+    return {injected, unchanged: JSON.stringify(invalid.toJSON()) === json, empty: invalid.isEmpty()};
   },
   failNextRender, dispose() { teardown?.(); },
 };

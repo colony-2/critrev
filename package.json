@@ -1,6 +1,6 @@
 {
   "name": "critrev",
-  "version": "0.1.2-images.20261115.t1900",
+  "version": "0.1.4-images.20261121.t0555",
   "license": "MIT",
   "description": "Unstyled React review editor and framework-independent Markdown diff, suggestions, and comments.",
   "type": "module",

@@ -2,9 +2,10 @@ import {expect, type Page} from '@playwright/test';
 import type {ImageFixture} from '../../demo/src/image-fixture.js';
 export type {ImageFixture};
 export const imageEditor = (page: Page) => page.locator('[data-fixture-editor]');
-export async function openImages(page: Page, surface = 'react', mode = 'wysiwyg') {
-  await page.goto(`/images.html?surface=${surface}&mode=${mode}`);
+export async function openImages(page: Page, surface = 'react', mode = 'wysiwyg', fresh = false) {
+  await page.goto(`/images.html?surface=${surface}&mode=${mode}${fresh ? '&empty' : ''}`);
   await page.waitForFunction(() => window.fixture?.ready);
+  expect(await page.locator('h1').evaluate(node => node.getBoundingClientRect().height), 'Chromium needs working fonts for native input ranges and captures').toBeGreaterThan(0);
   if (process.env.CRITREV_EXPECT_REACT) {
     const runtime = await page.evaluate(() => window.fixture.runtime);
     expect(runtime.react.split('.')[0]).toBe(process.env.CRITREV_EXPECT_REACT);

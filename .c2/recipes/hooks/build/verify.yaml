@@ -1,0 +1,29 @@
+id: critrev-verify
+inputs:
+  target_directory: ${{ inputs.target_directory }}
+sequence:
+- id: suite
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#chromium
+  inputs:
+    env:
+      TARGET: '{{ context.environment.op.worktree_path }}/{{ inputs.target_directory }}'
+      OUTBOX: ${{ context.environment.op.outbox }}
+    run: |
+      cd "$TARGET" || exit 1
+      result=failed
+      if node --test scripts/browser-environment.test.mjs > "$OUTBOX/tests.log" 2>&1 &&
+        node scripts/verify.mjs "$OUTBOX/verification" >> "$OUTBOX/tests.log" 2>&1; then
+        result=passed
+      fi
+      mkdir -p "$OUTBOX/verification"
+      tar -czf "$OUTBOX/verification.tar.gz" -C "$OUTBOX/verification" . || exit 1
+      printf '%s' "$result"
+outputs:
+  api_version: c2.build-hook/v1
+  status: ${{ sequence.suite.outputs.stdout }}
+  summary: Source and exact-package checks completed; inspect tests.log and the archived reports, package and captures.
+  artifact_refs: "${{ {'tests.log': sequence.suite.artifacts['tests.log'], 'verification.tar.gz': sequence.suite.artifacts['verification.tar.gz']} }}"

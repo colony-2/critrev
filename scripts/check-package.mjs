@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
+import {imageSuites, verifyBrowserResults} from './browser-results.mjs';
 
 const workspace = process.cwd();
 const directory = mkdtempSync(join(tmpdir(), 'critrev-consumer-'));
@@ -19,6 +20,7 @@ try {
   let packed;
   const supplied = argument('--tarball');
   const project = argument('--project');
+  const grep = argument('--grep');
   assert.ok(!project || ['chromium', 'mobile-chrome'].includes(project), 'Unknown browser project');
   if (supplied) tarball = resolve(supplied);
   else {
@@ -119,19 +121,23 @@ try {
         const reportPath = join(directory, `browser-${runtime}-${version}.json`);
         const env = {...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath, ...(argument('--captures') ? {REVIEW_CAPTURE_DIR: join(resolve(argument('--captures')), `${runtime}-react${version}`)} : {}), CRITREV_PACKAGE_ROOT: runtime === 'package' ? packageRoot : '', CRITREV_REACT_ROOT: join(directory, 'node_modules'), CRITREV_EXPECT_REACT: String(version), CRITREV_VITE_CACHE: cache, CRITREV_DEMO_ROOT: join(directory, 'demo'), PLAYWRIGHT_BROWSERS_PATH: resolve(workspace, '.cache/ms-playwright')};
         const playwright = resolve(workspace, 'node_modules/@playwright/test/cli.js');
-        execFileSync(process.execPath, [playwright, 'test', 'image-editor.spec.ts', 'image-paste.spec.ts', 'image-previews.spec.ts', 'image-history.spec.ts', 'markdown-images.spec.ts', 'markdown-inspection.spec.ts', '--workers=2', '--max-failures=5', '--reporter=list,json', ...(project ? ['--project', project] : [])], {cwd: workspace, env, stdio: 'inherit'});
+        const selection = [...imageSuites, ...(project ? ['--project', project] : []), ...(grep ? ['--grep', grep] : [])];
+        const inventory = JSON.parse(run(process.execPath, [playwright, 'test', ...selection, '--list', '--reporter=json'], workspace, {...env, PLAYWRIGHT_JSON_OUTPUT_NAME: ''}));
+        try { execFileSync(process.execPath, [playwright, 'test', ...selection, '--workers=2', '--max-failures=5', '--reporter=list,json'], {cwd: workspace, env, stdio: 'inherit'}); }
+        finally {
+          if (argument('--results') && existsSync(reportPath)) {
+            const results = resolve(argument('--results')); mkdirSync(results, {recursive: true});
+            cpSync(reportPath, join(results, `browser-${runtime}-react${version}.json`));
+          }
+        }
         const metadata = JSON.parse(readFileSync(join(cache, 'deps/_metadata.json'), 'utf8'));
         for (const name of ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime']) {
           assert.ok(resolve(cache, 'deps', metadata.optimized[name].src).startsWith(join(directory, 'node_modules', name.split('/')[0])), `Unexpected ${name} resolution`);
         }
         const report = JSON.parse(readFileSync(reportPath, 'utf8'));
-        const tests = [];
-        const visit = suite => { for (const spec of suite.specs ?? []) tests.push(...spec.tests); for (const child of suite.suites ?? []) visit(child); };
-        report.suites.forEach(visit);
+        const counts = verifyBrowserResults(report, inventory, project ? [project] : ['chromium', 'mobile-chrome']);
         for (const browserProject of project ? [project] : ['chromium', 'mobile-chrome']) {
-          const selected = tests.filter(test => test.projectName === browserProject);
-          assert.ok(selected.length > 0 && selected.every(test => test.status === 'expected' && test.results.every(result => result.status === 'passed')), 'Every required browser check must pass');
-          console.log(JSON.stringify({runtime, project: browserProject, passed: selected.length, react: JSON.parse(readFileSync(join(directory, 'node_modules/react/package.json'))).version, reactDOM: JSON.parse(readFileSync(join(directory, 'node_modules/react-dom/package.json'))).version, result: 'passed', tarball: originalIdentity.sha256}));
+          console.log(JSON.stringify({runtime, project: browserProject, selection: grep ?? 'full', passed: counts[browserProject], react: JSON.parse(readFileSync(join(directory, 'node_modules/react/package.json'))).version, reactDOM: JSON.parse(readFileSync(join(directory, 'node_modules/react-dom/package.json'))).version, result: 'passed', tarball: originalIdentity.sha256}));
         }
       }
     } else console.log('Browser checks were not requested; use --browser for delivery acceptance.');

@@ -51,3 +51,17 @@ test('U04 boundaries, distance and elapsed time prevent typing grouping', () => 
     history.replay('undo', x => { assert.equal(x.model.text, ''); return true; });
   }
 });
+
+test('FE-U03,FE-U06,FE-U07 copied empty endpoints distinguish no selection from caret zero', async () => {
+  const {createEditor, $getRoot, $createParagraphNode} = await import('lexical');
+  const editor = createEditor(); editor.update(() => $getRoot().append($createParagraphNode()), {discrete: true});
+  const richState = editor.getEditorState();
+  const before = {...snap(''), selection: null, richState}, after = {...snap(''), richState};
+  const history = new ModelHistory(); history.record(before, after);
+  assert.equal(history.replay('undo', target => { (target.model as {text: string}).text = 'not saved'; return false; }), false);
+  assert.ok(history.replay('undo', target => { assert.equal(target.model.text, ''); assert.equal(target.selection, null); assert.equal(target.richState, richState); return true; }));
+  assert.equal(history.replay('redo', () => false), false);
+  assert.ok(history.replay('redo', target => { assert.deepEqual(target.selection, {anchor: 0, focus: 0}); assert.equal(target.richState, richState); target.selection!.anchor = 42; return true; }));
+  history.replay('undo', () => true);
+  history.replay('redo', target => { assert.equal(target.selection!.anchor, 0); return true; });
+});
